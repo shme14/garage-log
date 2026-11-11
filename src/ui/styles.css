@@ -219,7 +219,8 @@ a {
 }
 
 /* Quick entry */
-.entry-form {
+.entry-form,
+.stack-form {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -261,11 +262,15 @@ a {
 }
 
 .entry-form select,
+.stack-form select,
 .entry-form input[type='text'],
+.stack-form input[type='text'],
 .entry-form input[type='number'],
+.stack-form input[type='number'],
 .entry-form input[type='date'],
 .entry-form input[type='month'],
-.entry-form textarea {
+.entry-form textarea,
+.stack-form textarea {
   width: 100%;
   min-height: var(--tap);
   padding: 8px 10px;
@@ -277,7 +282,8 @@ a {
   font-size: 16px; /* 16px minimum so iOS does not zoom on focus */
 }
 
-.entry-form textarea {
+.entry-form textarea,
+.stack-form textarea {
   min-height: 7rem;
   resize: vertical;
 }
@@ -375,4 +381,347 @@ a {
 
 .btn:disabled {
   opacity: 0.45;
+}
+
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.btn-block {
+  display: flex;
+  width: 100%;
+}
+
+/* Vehicle page */
+.vehicle-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vehicle-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vehicle-name {
+  margin: 4px 0;
+  font-size: 1.4rem;
+}
+
+.panel {
+  padding: 8px 14px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.panel h3 {
+  margin: 8px 0 4px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plain-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row-link {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+
+.parked > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.link-btn {
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+}
+
+.icon-btn {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+}
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.todo-check {
+  flex: 1;
+}
+
+.todo-done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.inline-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.inline-add input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+/* Service rows and state pills */
+.service-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.service-row:first-child {
+  border-top: 0;
+}
+
+.service-name {
+  font-weight: 600;
+}
+
+.service-state {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.service-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill-ok {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.pill-soon {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.pill-over {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.pill-never {
+  background: var(--border);
+  color: var(--muted);
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.tab[aria-current='page'] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Log */
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.entry-date {
+  font-weight: 600;
+}
+
+.entry-readings {
+  color: var(--muted);
+}
+
+.entry-text,
+.info-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.entry-meta {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tag-pill {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.entry-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.entry-card .entry-actions {
+  margin: 4px 0 0;
+}
+
+/* Info tab */
+.info-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-edited {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.info-input {
+  width: 100%;
+  min-height: 12rem;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+}
+
+/* Vehicle editor */
+.meter-row {
+  align-items: flex-end;
+}
+
+.meter-unit {
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Undo toast */
+.toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 8px 0 16px;
+  min-height: var(--tap);
+  border-radius: 10px;
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.toast-undo {
+  min-height: var(--tap);
+  margin-left: auto;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
 }
