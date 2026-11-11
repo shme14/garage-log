@@ -1,3 +1,24 @@
+import { HashRouter, Route, Routes } from 'react-router-dom'
+import Garage from './ui/Garage'
+import Header from './ui/Header'
+import Placeholder from './ui/Placeholder'
+
 export default function App() {
-  return <h1>Garage Log</h1>
+  return (
+    <HashRouter>
+      <Header />
+      <main className="app-main">
+        <Routes>
+          <Route path="/" element={<Garage />} />
+          <Route path="/entry/new" element={<Placeholder title="New entry" />} />
+          <Route path="/entry/:id/edit" element={<Placeholder title="Edit entry" />} />
+          <Route path="/vehicle/:id/:tab?" element={<Placeholder title="Vehicle" />} />
+          <Route path="/issue/:id" element={<Placeholder title="Issue" />} />
+          <Route path="/search" element={<Placeholder title="Search" />} />
+          <Route path="/settings" element={<Placeholder title="Settings" />} />
+          <Route path="*" element={<Placeholder title="Not found" />} />
+        </Routes>
+      </main>
+    </HashRouter>
+  )
 }

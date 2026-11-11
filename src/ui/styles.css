@@ -1,0 +1,219 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --text: #1b1f24;
+  --muted: #5b6570;
+  --border: #d8dce1;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --warn-bg: #fff1d6;
+  --warn-text: #7a4b00;
+  --danger-bg: #fde3e1;
+  --danger-text: #8f1d14;
+  --ok-bg: #dff3e3;
+  --ok-text: #1b5e2a;
+  --shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  --tap: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317;
+    --surface: #1a1f25;
+    --text: #e8ebee;
+    --muted: #9aa5b1;
+    --border: #2d343c;
+    --accent: #4c8dff;
+    --accent-text: #0b1220;
+    --warn-bg: #4a3510;
+    --warn-text: #ffd48a;
+    --danger-bg: #4d1f1b;
+    --danger-text: #ffb4ad;
+    --ok-bg: #1d3d25;
+    --ok-text: #a6e3b3;
+    --shadow: 0 2px 10px rgb(0 0 0 / 0.6);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+a {
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* Header */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-title {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.app-nav {
+  display: flex;
+  margin-left: auto;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 10px;
+  text-decoration: none;
+}
+
+.chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.chip-synced {
+  background: var(--ok-bg);
+  border-color: transparent;
+  color: var(--ok-text);
+}
+
+.chip-syncing {
+  color: var(--accent);
+}
+
+.chip-pending,
+.chip-offline {
+  background: var(--warn-bg);
+  border-color: transparent;
+  color: var(--warn-text);
+}
+
+.chip-sign-in,
+.chip-error {
+  background: var(--danger-bg);
+  border-color: transparent;
+  color: var(--danger-text);
+}
+
+/* Layout */
+.app-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 12px 96px;
+}
+
+/* Garage */
+.card-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: var(--tap);
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.card-name {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.card-readings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: var(--muted);
+}
+
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.badge-open {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.badge-due {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 2rem;
+  line-height: 1;
+  text-decoration: none;
+  box-shadow: var(--shadow);
+}
+
+.placeholder h2 {
+  margin: 8px 0;
+}
