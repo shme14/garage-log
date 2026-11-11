@@ -217,3 +217,162 @@ a {
 .placeholder h2 {
   margin: 8px 0;
 }
+
+/* Quick entry */
+.entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.entry-title {
+  margin: 4px 0 0;
+  font-size: 1.1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.field-wrap {
+  flex-wrap: wrap;
+}
+
+.field-grow {
+  flex: 1 1 140px;
+}
+
+.entry-form select,
+.entry-form input[type='text'],
+.entry-form input[type='number'],
+.entry-form input[type='date'],
+.entry-form input[type='month'],
+.entry-form textarea {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16px minimum so iOS does not zoom on focus */
+}
+
+.entry-form textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--tap);
+}
+
+.check input {
+  width: 22px;
+  height: 22px;
+}
+
+.field-warn {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 0.9rem;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-chip {
+  min-height: var(--tap);
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.tag-chip[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+}
+
+.more > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.more[open] > summary {
+  margin-bottom: 8px;
+}
+
+.more[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn {
+  min-width: 96px;
+  min-height: var(--tap);
+  padding: 0 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+}
