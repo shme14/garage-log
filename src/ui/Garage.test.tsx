@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { db } from '../db/db'
@@ -102,26 +102,45 @@ describe('Garage', () => {
     expect(screen.queryByText(/due$/)).not.toBeInTheDocument()
   })
 
-  test('does not mix in another vehicle\'s entries, issues or hidden records', async () => {
+  test("does not mix in another vehicle's entries, issues or hidden records", async () => {
+    // Both vehicles deliberately share the meter id 'odo' and the same interval, so a card handed
+    // the wrong vehicle's entries would show the wrong reading and the wrong due state.
+    const service = (id: string, vehicleId: string): ServiceItem => ({
+      ...base,
+      id,
+      vehicleId,
+      name: 'Oil change',
+      intervalMeterId: 'odo',
+      intervalAmount: 5000,
+    })
     await putRaw({
       vehicles: [
         vehicle(),
-        vehicle({ id: 'v2', name: 'Relay', meters: [{ id: 'odo2', name: 'Odometer', unit: 'km' }] }),
+        vehicle({ id: 'v2', name: 'Relay' }),
         vehicle({ id: 'v3', name: 'Old Beater', archived: true }),
         vehicle({ id: 'v4', name: 'Deleted Bike', deleted: true }),
       ],
       entries: [
-        entry('e1', 'v1', { odo: 100 }),
-        entry('e2', 'v2', { odo2: 42 }),
-        entry('e3', 'v1', { odo: 999999 }, { deleted: true }),
+        // v1: oil last done at 150,000, now 159,500 -> overdue
+        entry('e1', 'v1', { odo: 150000 }, { serviceItemIds: ['s1'] }),
+        entry('e2', 'v1', { odo: 159500 }),
+        // v2: oil last done at 40, now 42 -> ok, but overdue if v1's entries leaked in
+        entry('e3', 'v2', { odo: 40 }, { serviceItemIds: ['s2'] }),
+        entry('e4', 'v2', { odo: 42 }),
+        entry('e5', 'v1', { odo: 999999 }, { deleted: true }),
       ],
       issues: [issue('i1', 'v2', 'open'), issue('i2', 'v1', 'open'), { ...issue('i3', 'v1', 'open'), deleted: true }],
+      serviceItems: [service('s1', 'v1'), service('s2', 'v2')],
     })
     renderGarage()
-    expect(await screen.findByText('Relay')).toBeInTheDocument()
-    expect(await screen.findByText('100 km')).toBeInTheDocument()
-    expect(await screen.findByText('42 km')).toBeInTheDocument()
-    expect(screen.getAllByText('1 open')).toHaveLength(2)
+    const v1 = await screen.findByRole('link', { name: /2021 F150/ })
+    const v2 = await screen.findByRole('link', { name: /Relay/ })
+    await waitFor(() => expect(within(v1).getByText('159,500 km')).toBeInTheDocument())
+    await waitFor(() => expect(within(v2).getByText('42 km')).toBeInTheDocument())
+    expect(within(v1).getByText('1 open')).toBeInTheDocument()
+    expect(within(v2).getByText('1 open')).toBeInTheDocument()
+    expect(within(v1).getByText('1 due')).toBeInTheDocument()
+    expect(within(v2).queryByText(/due$/)).not.toBeInTheDocument()
     expect(screen.queryByText('Old Beater')).not.toBeInTheDocument()
     expect(screen.queryByText('Deleted Bike')).not.toBeInTheDocument()
     expect(screen.queryByText(/999,999/)).not.toBeInTheDocument()
