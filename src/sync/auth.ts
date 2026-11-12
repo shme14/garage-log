@@ -249,9 +249,13 @@ export function getToken(): Promise<string> {
 }
 
 /** Forget this device's Google account, folder and token, stop syncing. Local data is untouched. */
-export async function signOut(): Promise<void> {
+export async function signOut(
+  reload: () => void = () => window.location.reload(),
+): Promise<void> {
   const old = token
   stopSync()
+  // Forget the account first so a concurrent getToken cannot start a silent refresh.
+  await db.meta.bulkDelete([ACCOUNT_KEY, FOLDER_ID_KEY, FOLDER_INFO_KEY])
   clearToken()
   if (old) {
     try {
@@ -260,5 +264,11 @@ export async function signOut(): Promise<void> {
       // best effort
     }
   }
-  await db.meta.bulkDelete([ACCOUNT_KEY, FOLDER_ID_KEY, FOLDER_INFO_KEY])
+  // stopSync cannot cancel an in-flight pass and the engine is started at most once per page
+  // session, so the next sign-in must begin in a fresh session.
+  try {
+    reload()
+  } catch {
+    // nothing more to do
+  }
 }

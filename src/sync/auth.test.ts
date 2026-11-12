@@ -218,8 +218,10 @@ describe('signOut', () => {
     await db.meta.put({ key: 'google.folderId', value: 'folder-1' })
     await db.meta.put({ key: 'google.folderInfo', value: '{}' })
 
-    await signOut()
+    const reload = vi.fn()
+    await signOut(reload)
 
+    expect(reload).toHaveBeenCalledTimes(1)
     expect(g.revoke).toHaveBeenCalledWith('tok-1', expect.anything())
     expect(await db.meta.get('google.account')).toBeUndefined()
     expect(await db.meta.get('google.folderId')).toBeUndefined()
@@ -227,6 +229,27 @@ describe('signOut', () => {
     expect(engine.stopSync).toHaveBeenCalledTimes(1)
     expect(await isSignedIn()).toBe(false)
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+  })
+
+  test('deletes the account before reloading the page so the next session starts signed out', async () => {
+    const g = installGoogle()
+    g.answers.push({ access_token: 'tok-1', expires_in: 3599 })
+    mockUserinfo()
+    await signIn()
+    let accountAtReload: unknown = 'unset'
+    await signOut(() => {
+      // reload is called synchronously after the awaited meta delete
+      void db.meta.get('google.account').then((r) => (accountAtReload = r))
+    })
+    await vi.waitFor(() => expect(accountAtReload).toBeUndefined())
+  })
+
+  test('a reload that throws does not fail signOut', async () => {
+    installGoogle()
+    await signOut(() => {
+      throw new Error('no reload')
+    })
+    expect(engine.stopSync).toHaveBeenCalledTimes(1)
   })
 
   test('still signs out when revoke throws or GIS is absent', async () => {
@@ -237,11 +260,11 @@ describe('signOut', () => {
     g.revoke.mockImplementation(() => {
       throw new Error('boom')
     })
-    await signOut()
+    await signOut(vi.fn())
     expect(await isSignedIn()).toBe(false)
 
     delete (window as unknown as { google?: unknown }).google
-    await signOut()
+    await signOut(vi.fn())
     expect(engine.stopSync).toHaveBeenCalledTimes(2)
   })
 })

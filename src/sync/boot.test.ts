@@ -28,9 +28,10 @@ vi.mock('./drive', () => ({
   createDriveStore: () => m.store,
 }))
 
-import { bootSync, ensureSyncStarted } from './boot'
+import { bootSync, ensureSyncStarted, resetSyncSessionForTests } from './boot'
 
 beforeEach(() => {
+  resetSyncSessionForTests()
   m.running = false
   m.signedIn = true
   m.folderId = 'folder-1'
@@ -54,6 +55,14 @@ describe('ensureSyncStarted', () => {
     m.folderId = undefined
     expect(await ensureSyncStarted()).toBe(false)
     expect(m.startSync).not.toHaveBeenCalled()
+  })
+
+  test('starts only once per session, even after the engine was stopped', async () => {
+    expect(await ensureSyncStarted()).toBe(true)
+    m.running = false // as if stopSync() had run (e.g. sign-out before the page reloads)
+    expect(await ensureSyncStarted()).toBe(false)
+    expect(await ensureSyncStarted()).toBe(false)
+    expect(m.startSync).toHaveBeenCalledTimes(1)
   })
 
   test('never starts a second time while running, even for concurrent calls', async () => {
