@@ -199,45 +199,31 @@ describe('getToken', () => {
     expect(g.requests).toHaveLength(0)
   })
 
-  test('within 60 s of expiry it silently re-requests with prompt none and login_hint', async () => {
+  // GIS opens a popup for every token request, even with prompt 'none'. getToken runs from
+  // background sync passes (no user gesture), so it must never request: the browser would
+  // block the popup and nag the user ("allow this site to open…") on every pass.
+  test('within 60 s of expiry it throws AuthError without opening a popup', async () => {
     const g = installGoogle()
     await signedIn(g, 30)
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(g.requests).toHaveLength(0)
+  })
+
+  test('repeated background calls after expiry never open a popup', async () => {
+    const g = installGoogle()
+    await signedIn(g, 30)
+    await Promise.allSettled([getToken(), getToken(), getToken()])
+    expect(g.requests).toHaveLength(0)
+  })
+
+  test('after expiry, a tap on Sign in gets a fresh token that getToken then returns', async () => {
+    const g = installGoogle()
+    await signedIn(g, 30)
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
     g.answers.push({ access_token: 'tok-2', expires_in: 3599 })
+    mockUserinfo()
+    await signIn()
     expect(await getToken()).toBe('tok-2')
-    expect(g.requests).toEqual([{ prompt: 'none', login_hint: 'jamie@example.com' }])
-  })
-
-  test('concurrent callers share one silent request', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
-    g.answers.push({ access_token: 'tok-2', expires_in: 3599 })
-    const [a, b] = await Promise.all([getToken(), getToken()])
-    expect([a, b]).toEqual(['tok-2', 'tok-2'])
-    expect(g.requests).toHaveLength(1)
-  })
-
-  test('a failed silent request is an AuthError', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
-    g.answers.push({ fail: 'popup_failed_to_open' })
-    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-  })
-
-  test('a silent request that returns an error response is an AuthError', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
-    g.answers.push({ error: 'interaction_required' })
-    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-  })
-
-  test('a silent request that never answers times out as an AuthError', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
-    vi.useFakeTimers()
-    const p = getToken()
-    const assertion = expect(p).rejects.toBeInstanceOf(AuthError)
-    await vi.advanceTimersByTimeAsync(60_000)
-    await assertion
   })
 
   test('with no prior sign-in it throws AuthError without opening anything', async () => {
@@ -246,12 +232,12 @@ describe('getToken', () => {
     expect(g.requests).toHaveLength(0)
   })
 
-  test('clearToken forces the next getToken to re-request', async () => {
+  test('after clearToken, getToken asks for a sign-in instead of re-requesting', async () => {
     const g = installGoogle()
     await signedIn(g)
     clearToken()
-    g.answers.push({ access_token: 'tok-3', expires_in: 3599 })
-    expect(await getToken()).toBe('tok-3')
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(g.requests).toHaveLength(0)
   })
 })
 

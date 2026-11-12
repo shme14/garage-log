@@ -11,7 +11,6 @@ const SCOPE = 'https://www.googleapis.com/auth/drive openid email profile'
 const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 
 const REFRESH_MARGIN_MS = 60_000
-const SILENT_TIMEOUT_MS = 20_000
 
 export interface GoogleAccount {
   name: string
@@ -85,7 +84,6 @@ export function preloadGsi(): void {
 
 let token: string | undefined
 let expiresAt = 0
-let refreshing: Promise<string> | null = null
 
 /** Forget the in-memory access token (it was rejected, or the user signed out). */
 export function clearToken(): void {
@@ -131,23 +129,11 @@ function tokenClient(g: GoogleOAuth2): TokenClient {
 function requestToken(
   g: GoogleOAuth2,
   overrides: { prompt: string; login_hint?: string },
-  timeoutMs?: number,
 ): Promise<TokenResponse> {
   return new Promise<TokenResponse>((resolve, reject) => {
     pending?.reject(new Error('Superseded by a newer sign-in request'))
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const done = <T,>(fn: (v: T) => void) => (v: T) => {
-      if (timer !== undefined) clearTimeout(timer)
-      fn(v)
-    }
-    const mine = { resolve: done(resolve), reject: done(reject) }
+    const mine = { resolve, reject }
     pending = mine
-    if (timeoutMs !== undefined) {
-      timer = setTimeout(() => {
-        if (pending === mine) pending = null
-        reject(new Error('Sign-in request timed out'))
-      }, timeoutMs)
-    }
     try {
       tokenClient(g).requestAccessToken(overrides)
     } catch (e) {
@@ -230,41 +216,18 @@ export async function signIn(): Promise<GoogleAccount> {
   return account
 }
 
-async function silentRefresh(): Promise<string> {
-  const account = await getAccount()
-  if (!account) throw new AuthError('Sign in to Google')
-  let g = oauth2()
-  if (!g) {
-    await loadGsi() // a load failure is a plain error (offline), not a sign-in problem
-    g = oauth2()
-    if (!g) throw new Error('Google sign-in is unavailable')
-  }
-  try {
-    const resp = await requestToken(
-      g,
-      { prompt: 'none', login_hint: account.email },
-      SILENT_TIMEOUT_MS,
-    )
-    return applyToken(resp)
-  } catch {
-    clearToken()
-    throw new AuthError('Sign in to Google again')
-  }
-}
-
 /**
- * A valid access token: the cached one if it has more than 60 s left, else a silent re-request.
- * Throws AuthError when the user has to sign in again.
+ * A valid access token: the cached one if it has more than 60 s left. Otherwise throws AuthError
+ * so the sync chip asks for a tap on "Sign in".
+ *
+ * This never requests a token itself: GIS opens a popup for every request (even prompt 'none'),
+ * and getToken runs from background sync passes with no user gesture, so the browser would block
+ * the popup and prompt "allow this site to open…" on every pass. Only signIn, from a tap, asks.
  */
-export function getToken(): Promise<string> {
-  if (token && expiresAt - Date.now() > REFRESH_MARGIN_MS) return Promise.resolve(token)
-  if (!refreshing) {
-    const p = silentRefresh().finally(() => {
-      if (refreshing === p) refreshing = null
-    })
-    refreshing = p
-  }
-  return refreshing
+export async function getToken(): Promise<string> {
+  if (token && expiresAt - Date.now() > REFRESH_MARGIN_MS) return token
+  clearToken()
+  throw new AuthError(knownEmail ? 'Sign in to Google again' : 'Sign in to Google')
 }
 
 /** Forget this device's Google account, folder and token, stop syncing. Local data is untouched. */
@@ -273,7 +236,7 @@ export async function signOut(
 ): Promise<void> {
   const old = token
   stopSync()
-  // Forget the account first so a concurrent getToken cannot start a silent refresh.
+  // Forget the account and folder before the token so a concurrent sync pass fails fast.
   await db.meta.bulkDelete([ACCOUNT_KEY, FOLDER_ID_KEY, FOLDER_INFO_KEY])
   knownEmail = undefined
   clearToken()
