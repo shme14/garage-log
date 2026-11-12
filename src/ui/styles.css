@@ -803,3 +803,79 @@ a.btn {
 .issue-count {
   margin: 0;
 }
+
+/* Search */
+.search-page,
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.search-page input[type='search'] {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16px minimum so iOS does not zoom on focus */
+}
+
+.search-page select {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 0.9rem;
+}
+
+.result-snippet {
+  overflow-wrap: anywhere;
+}
+
+.result mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+/* Settings */
+.settings-page input[type='text'] {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-note,
+.settings-line {
+  margin: 0;
+}

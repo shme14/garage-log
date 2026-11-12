@@ -1,14 +1,6 @@
 import { useEffect, useState } from 'react'
 import { subscribeStatus, type SyncStatus } from '../sync/engine'
-
-const SYNC_LABELS: Record<SyncStatus, string> = {
-  synced: 'Synced',
-  syncing: 'Syncing…',
-  offline: 'Offline',
-  pending: 'Not synced',
-  'sign-in': 'Sign in',
-  error: 'Sync error',
-}
+import { SYNC_LABELS } from './syncLabels'
 
 export default function SyncChip() {
   const [status, setStatus] = useState<SyncStatus>('pending')
