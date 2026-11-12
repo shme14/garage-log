@@ -506,6 +506,7 @@ a.btn {
 }
 
 .sum-pill::after {
+  content: '▾';
   content: '▾' / '';
   margin-left: 4px;
   font-size: 0.7rem;
@@ -513,6 +514,7 @@ a.btn {
 }
 
 .sum[open] .sum-pill::after {
+  content: '▴';
   content: '▴' / '';
 }
 
