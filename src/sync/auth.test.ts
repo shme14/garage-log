@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { db, getUser } from '../db/db'
+import { db, getUser, setUser } from '../db/db'
 
 const engine = vi.hoisted(() => ({ stopSync: vi.fn() }))
 vi.mock('./engine', () => engine)
@@ -52,6 +52,7 @@ function mockUserinfo(body: unknown = { name: 'Jamie D', email: 'jamie@example.c
 
 beforeEach(async () => {
   await db.meta.clear()
+  await getAccount() // what boot does: mirrors the stored account for signIn's login_hint
   clearToken()
   engine.stopSync.mockClear()
 })
@@ -89,6 +90,20 @@ describe('signIn', () => {
     expect(await getToken()).toBe('tok-1')
   })
 
+  test('preselects the stored account with login_hint', async () => {
+    await db.meta.put({
+      key: 'google.account',
+      value: JSON.stringify({ email: 'jamie@example.com', name: 'Jamie D' }),
+    })
+    await getAccount() // boot reads the account before any tap
+    const g = installGoogle()
+    g.answers.push({ access_token: 't', expires_in: 3599 })
+    mockUserinfo()
+    const p = signIn() // still synchronous: the gesture must reach requestAccessToken
+    expect(g.requests).toEqual([{ prompt: '', login_hint: 'jamie@example.com' }])
+    await p
+  })
+
   test('rejects when the user closes the popup, and stores nothing', async () => {
     const g = installGoogle()
     g.answers.push({ fail: 'popup_closed' })
@@ -122,6 +137,37 @@ describe('signIn', () => {
     mockUserinfo()
     await signIn()
     expect(await db.meta.get('google.folderId')).toBeUndefined()
+  })
+
+  test('keeps a stored user name when the same account signs in again', async () => {
+    await setUser('Chosen Name')
+    await db.meta.put({
+      key: 'google.account',
+      value: JSON.stringify({ email: 'jamie@example.com', name: 'Jamie D' }),
+    })
+    const g = installGoogle()
+    g.answers.push({ access_token: 't', expires_in: 3599 })
+    mockUserinfo()
+    await signIn()
+    expect(await getUser()).toBe('Chosen Name')
+  })
+
+  test('sets the user name when none is stored yet', async () => {
+    const g = installGoogle()
+    g.answers.push({ access_token: 't', expires_in: 3599 })
+    mockUserinfo()
+    await signIn()
+    expect(await getUser()).toBe('Jamie D')
+  })
+
+  test('sets the user name when a different account signs in', async () => {
+    await setUser('Old Name')
+    await db.meta.put({ key: 'google.account', value: JSON.stringify({ email: 'old@x.com', name: 'Old' }) })
+    const g = installGoogle()
+    g.answers.push({ access_token: 't', expires_in: 3599 })
+    mockUserinfo()
+    await signIn()
+    expect(await getUser()).toBe('Jamie D')
   })
 
   test('keeps the folder when the same account signs in again', async () => {

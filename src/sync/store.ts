@@ -22,6 +22,14 @@ export class AuthError extends Error {
   }
 }
 
+/** No Drive folder has been chosen on this device yet (not a sign-in problem). */
+export class FolderError extends Error {
+  constructor(message = 'Choose a folder in Settings') {
+    super(message)
+    this.name = 'FolderError'
+  }
+}
+
 /** In-memory store for tests: file name -> content. */
 export class MemoryStore implements SyncStore {
   readonly files = new Map<string, string>()

@@ -27,6 +27,7 @@ describe('Header sync chip', () => {
       ['synced', 'Synced'],
       ['offline', 'Offline'],
       ['sign-in', 'Sign in'],
+      ['no-folder', 'Choose folder'],
       ['error', 'Sync error'],
     ]
     for (const [status, label] of expected) {

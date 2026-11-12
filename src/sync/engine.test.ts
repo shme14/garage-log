@@ -14,7 +14,7 @@ import {
   type SyncFile,
   type SyncStatus,
 } from './engine'
-import { AuthError, MemoryStore, type SyncFileRef, type SyncStore } from './store'
+import { AuthError, FolderError, MemoryStore, type SyncFileRef, type SyncStore } from './store'
 
 const ME = 'a'
 const ctxA = { user: 'Jamie', deviceId: ME }
@@ -336,6 +336,17 @@ test('AuthError sets status sign-in and leaves local data untouched', async () =
   expect(await readAll()).toEqual(before)
 })
 
+test('a missing folder sets status no-folder, not sign-in', async () => {
+  const store: SyncStore = {
+    list: () => Promise.reject(new FolderError()),
+    read: () => Promise.reject(new FolderError()),
+    writeOwn: () => Promise.reject(new FolderError()),
+  }
+  startSync(store)
+  await waitForStatus('no-folder')
+  expect(currentStatus()).toBe('no-folder')
+})
+
 test('other failures set status error', async () => {
   const store: SyncStore = {
     list: () => Promise.reject(new Error('500')),
@@ -507,4 +518,74 @@ test('isSyncRunning is true only between startSync and stopSync', async () => {
   await waitForStatus('synced')
   stopSync()
   expect(isSyncRunning()).toBe(false)
+})
+
+// ---------------------------------------------------------------- resume (visibilitychange)
+
+// 'synced' is published just before the pass's promise settles; let it finish.
+const settle = () => new Promise((r) => setTimeout(r, 0))
+
+function setVisibility(state: 'visible' | 'hidden'): void {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(state)
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
+test('becoming visible triggers a sync pass', async () => {
+  const store = new MemoryStore()
+  const list = vi.spyOn(store, 'list')
+  startSync(store)
+  await waitForStatus('synced')
+  await settle()
+  expect(list).toHaveBeenCalledTimes(1)
+
+  setVisibility('visible')
+  await syncNow() // joins the pass the event started
+  expect(list).toHaveBeenCalledTimes(2)
+})
+
+test('going hidden does not trigger a sync pass', async () => {
+  const store = new MemoryStore()
+  const list = vi.spyOn(store, 'list')
+  startSync(store)
+  await waitForStatus('synced')
+
+  setVisibility('hidden')
+  await Promise.resolve()
+  expect(list).toHaveBeenCalledTimes(1)
+})
+
+test('visibility passes are throttled to one per 30 s', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  const store = new MemoryStore()
+  const list = vi.spyOn(store, 'list')
+  startSync(store)
+  await waitForStatus('synced')
+  await settle()
+  expect(list).toHaveBeenCalledTimes(1)
+
+  setVisibility('visible')
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+  await vi.waitFor(() => expect(currentStatus()).toBe('synced'))
+  await settle()
+
+  vi.setSystemTime(Date.now() + 10_000)
+  setVisibility('visible')
+  await new Promise((r) => setTimeout(r, 30)) // real timers: let any (wrongly) started pass run
+  expect(list).toHaveBeenCalledTimes(2)
+
+  vi.setSystemTime(Date.now() + 31_000)
+  setVisibility('visible')
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(3))
+})
+
+test('stopSync removes the visibilitychange listener', async () => {
+  const store = new MemoryStore()
+  const list = vi.spyOn(store, 'list')
+  startSync(store)
+  await waitForStatus('synced')
+  stopSync()
+
+  setVisibility('visible')
+  await Promise.resolve()
+  expect(list).toHaveBeenCalledTimes(1)
 })

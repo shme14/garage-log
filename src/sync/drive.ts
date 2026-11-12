@@ -1,7 +1,7 @@
 import { db } from '../db/db'
 import { clearToken, getToken } from './auth'
 import { FOLDER_ID_KEY, FOLDER_INFO_KEY, FOLDER_NAME } from './config'
-import { AuthError, type SyncFileRef, type SyncStore } from './store'
+import { AuthError, FolderError, type SyncFileRef, type SyncStore } from './store'
 
 const API = 'https://www.googleapis.com/drive/v3'
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3'
@@ -163,7 +163,7 @@ export async function getFolder(): Promise<DriveFolder | undefined> {
 
 async function requireFolderId(): Promise<string> {
   const id = await getFolderId()
-  if (!id) throw new AuthError('Choose a folder in Settings')
+  if (!id) throw new FolderError('Choose a folder in Settings')
   return id
 }
 
@@ -228,7 +228,7 @@ export function createDriveStore(): SyncStore {
       let pageToken: string | undefined
       do {
         const params = new URLSearchParams({
-          q: `'${q(folderId)}' in parents and trashed=false and name contains 'changes-'`,
+          q: `'${q(folderId)}' in parents and trashed=false`,
           includeItemsFromAllDrives: 'true',
           supportsAllDrives: 'true',
           fields: 'nextPageToken,files(id,name)',

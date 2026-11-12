@@ -81,6 +81,31 @@ describe('bootSync', () => {
     expect(m.startSync).toHaveBeenCalledTimes(1)
   })
 
+  test('asks the browser for persistent storage once, fire-and-forget', async () => {
+    const persist = vi.fn(async () => true)
+    vi.stubGlobal('navigator', { ...navigator, storage: { persist } })
+    await bootSync()
+    expect(persist).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+  })
+
+  test('survives a browser without storage.persist or one that throws', async () => {
+    vi.stubGlobal('navigator', { ...navigator, storage: undefined })
+    await expect(bootSync()).resolves.toBeUndefined()
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      storage: {
+        persist: () => {
+          throw new Error('nope')
+        },
+      },
+    })
+    await expect(bootSync()).resolves.toBeUndefined()
+    vi.stubGlobal('navigator', { ...navigator, storage: { persist: () => Promise.reject(new Error('x')) } })
+    await expect(bootSync()).resolves.toBeUndefined()
+    vi.unstubAllGlobals()
+  })
+
   test('never rejects', async () => {
     m.folderId = undefined
     m.signedIn = false

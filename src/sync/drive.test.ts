@@ -16,7 +16,7 @@ import {
   setFolder,
 } from './drive'
 import { FOLDER_NAME } from './config'
-import { AuthError } from './store'
+import { AuthError, FolderError } from './store'
 
 type Call = { url: URL; init: RequestInit }
 let calls: Call[]
@@ -128,7 +128,7 @@ describe('drive store', () => {
     expect(calls).toHaveLength(2)
     const u = calls[0].url
     expect(u.searchParams.get('q')).toBe(
-      "'folder-1' in parents and trashed=false and name contains 'changes-'",
+      "'folder-1' in parents and trashed=false",
     )
     expect(u.searchParams.get('supportsAllDrives')).toBe('true')
     expect(u.searchParams.get('includeItemsFromAllDrives')).toBe('true')
@@ -254,7 +254,7 @@ describe('drive store', () => {
 })
 
 describe('drive store without a folder', () => {
-  test('every operation throws AuthError telling the user to choose a folder', async () => {
+  test('every operation throws FolderError (not AuthError) telling the user to choose a folder', async () => {
     const store = createDriveStore()
     for (const op of [
       () => store.list(),
@@ -262,7 +262,8 @@ describe('drive store without a folder', () => {
       () => store.writeOwn('changes-a.json', '{}'),
     ]) {
       const err = await op().catch((e: unknown) => e)
-      expect(err).toBeInstanceOf(AuthError)
+      expect(err).toBeInstanceOf(FolderError)
+      expect(err).not.toBeInstanceOf(AuthError)
       expect((err as Error).message).toMatch(/choose a folder/i)
     }
     expect(calls).toHaveLength(0)
@@ -270,7 +271,7 @@ describe('drive store without a folder', () => {
 
   test('picking up a folder chosen later needs no new store', async () => {
     const store = createDriveStore()
-    await expect(store.list()).rejects.toBeInstanceOf(AuthError)
+    await expect(store.list()).rejects.toBeInstanceOf(FolderError)
     await setFolder('late')
     responder = () => json({ files: [] })
     await expect(store.list()).resolves.toEqual([])

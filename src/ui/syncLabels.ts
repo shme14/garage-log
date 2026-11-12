@@ -6,5 +6,6 @@ export const SYNC_LABELS: Record<SyncStatus, string> = {
   offline: 'Offline',
   pending: 'Not synced',
   'sign-in': 'Sign in',
+  'no-folder': 'Choose folder',
   error: 'Sync error',
 }

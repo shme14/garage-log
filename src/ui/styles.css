@@ -120,6 +120,7 @@ a {
 }
 
 .chip-sign-in,
+.chip-no-folder,
 .chip-error {
   background: var(--danger-bg);
   border-color: transparent;

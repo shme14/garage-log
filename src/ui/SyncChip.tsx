@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { signIn } from '../sync/auth'
 import { ensureSyncStarted } from '../sync/boot'
 import { subscribeStatus, syncNow, type SyncStatus } from '../sync/engine'
@@ -25,6 +26,10 @@ export default function SyncChip() {
         <button type="button" className="chip-button" onClick={() => void onSignIn()}>
           {SYNC_LABELS[status]}
         </button>
+      ) : status === 'no-folder' ? (
+        <Link className="chip-button" to="/settings">
+          {SYNC_LABELS[status]}
+        </Link>
       ) : (
         SYNC_LABELS[status]
       )}

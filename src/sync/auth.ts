@@ -1,4 +1,4 @@
-import { db, setUser } from '../db/db'
+import { db, getUser, setUser } from '../db/db'
 import { ACCOUNT_KEY, FOLDER_ID_KEY, FOLDER_INFO_KEY, GOOGLE_CLIENT_ID } from './config'
 import { stopSync } from './engine'
 import { AuthError } from './store'
@@ -159,7 +159,11 @@ function requestToken(
 
 // ---------------------------------------------------------------- account
 
-export async function getAccount(): Promise<GoogleAccount | undefined> {
+// The stored account's email, mirrored in memory so signIn can pass login_hint synchronously.
+// Refreshed by every getAccount (boot reads it long before any tap), signIn and signOut.
+let knownEmail: string | undefined
+
+async function readAccount(): Promise<GoogleAccount | undefined> {
   const row = await db.meta.get(ACCOUNT_KEY)
   if (!row) return undefined
   try {
@@ -171,6 +175,12 @@ export async function getAccount(): Promise<GoogleAccount | undefined> {
     // fall through
   }
   return undefined
+}
+
+export async function getAccount(): Promise<GoogleAccount | undefined> {
+  const account = await readAccount()
+  knownEmail = account?.email
+  return account
 }
 
 /** True when an account was signed in on this device (the token itself may have expired). */
@@ -197,13 +207,22 @@ export async function signIn(): Promise<GoogleAccount> {
     g = oauth2()
     if (!g) throw new Error('Google sign-in is unavailable')
   }
-  const resp = await requestToken(g, { prompt: '' })
+  // Preselect the account this device already uses (login_hint). Read from the in-memory copy
+  // kept by getAccount: awaiting the database here would lose the user gesture.
+  const resp = await requestToken(
+    g,
+    knownEmail ? { prompt: '', login_hint: knownEmail } : { prompt: '' },
+  )
   const accessToken = applyToken(resp)
   const account = await fetchUserinfo(accessToken)
 
   const previous = await getAccount()
-  await setUser(account.name)
+  // Keep a name the user already has unless a different Google account just signed in.
+  if (!(await getUser()) || (previous && previous.email !== account.email)) {
+    await setUser(account.name)
+  }
   await db.meta.put({ key: ACCOUNT_KEY, value: JSON.stringify(account) })
+  knownEmail = account.email
   if (previous && previous.email !== account.email) {
     // A different account: its folder choice does not carry over.
     await db.meta.bulkDelete([FOLDER_ID_KEY, FOLDER_INFO_KEY])
@@ -256,6 +275,7 @@ export async function signOut(
   stopSync()
   // Forget the account first so a concurrent getToken cannot start a silent refresh.
   await db.meta.bulkDelete([ACCOUNT_KEY, FOLDER_ID_KEY, FOLDER_INFO_KEY])
+  knownEmail = undefined
   clearToken()
   if (old) {
     try {

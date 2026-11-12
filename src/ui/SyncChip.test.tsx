@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SyncStatus } from '../sync/engine'
 
@@ -46,7 +47,7 @@ beforeEach(() => {
 
 describe('SyncChip', () => {
   test('is plain status text unless sign-in is needed', () => {
-    render(<SyncChip />)
+    render(<SyncChip />, { wrapper: MemoryRouter })
     for (const s of ['pending', 'syncing', 'synced', 'offline', 'error'] as SyncStatus[]) {
       act(() => m.push(s))
       expect(screen.queryByRole('button')).not.toBeInTheDocument()
@@ -55,7 +56,7 @@ describe('SyncChip', () => {
 
   test('in sign-in status it is a button that signs in, then syncs', async () => {
     const user = userEvent.setup()
-    render(<SyncChip />)
+    render(<SyncChip />, { wrapper: MemoryRouter })
     act(() => m.push('sign-in'))
     expect(screen.getByRole('status')).toHaveTextContent(/^Sign in$/)
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
@@ -64,10 +65,17 @@ describe('SyncChip', () => {
     expect(m.order).toEqual(['signIn', 'ensureSyncStarted', 'syncNow'])
   })
 
+  test('no-folder shows "Choose folder" as a link to settings, not a sign-in button', () => {
+    render(<SyncChip />, { wrapper: MemoryRouter })
+    act(() => m.push('no-folder'))
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Choose folder' })).toHaveAttribute('href', '/settings')
+  })
+
   test('a cancelled sign-in does not sync and does not throw', async () => {
     m.signIn.mockRejectedValue(new Error('popup_closed'))
     const user = userEvent.setup()
-    render(<SyncChip />)
+    render(<SyncChip />, { wrapper: MemoryRouter })
     act(() => m.push('sign-in'))
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
     await waitFor(() => expect(m.signIn).toHaveBeenCalled())

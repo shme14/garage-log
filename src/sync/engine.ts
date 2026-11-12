@@ -2,7 +2,7 @@ import { db, getDeviceId } from '../db/db'
 import { putRaw, readAll, setLocalChangeListener } from '../db/repo'
 import type { BaseRecord, RecordSet, TableName } from '../model/types'
 import { newer, ownRecords, winnersOver } from './merge'
-import { AuthError, type SyncStore } from './store'
+import { AuthError, FolderError, type SyncStore } from './store'
 
 export interface SyncFile {
   version: 1
@@ -10,13 +10,14 @@ export interface SyncFile {
   records: RecordSet
 }
 
-export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'pending' | 'sign-in' | 'error'
+export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'pending' | 'sign-in' | 'no-folder' | 'error'
 
 type StatusSubscriber = (s: SyncStatus, lastSynced?: string, skipped?: string[]) => void
 
 const TABLES: readonly TableName[] = ['vehicles', 'entries', 'issues', 'todos', 'serviceItems']
 const FILE_NAME_RE = /^changes-.+\.json$/
 const DEBOUNCE_MS = 5000
+const RESUME_THROTTLE_MS = 30_000
 
 export function fileName(deviceId: string): string {
   return `changes-${deviceId}.json`
@@ -128,6 +129,8 @@ let dirty = false // a local change happened since the latest pass started
 let lastPassOk = true
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
 let onlineHandler: (() => void) | undefined
+let visibilityHandler: (() => void) | undefined
+let lastResumeAt = -Infinity
 
 function emit(fn: StatusSubscriber): void {
   try {
@@ -190,7 +193,7 @@ async function runPass(store: SyncStore, myEpoch: number): Promise<void> {
   } catch (e) {
     if (myEpoch !== epoch) return
     lastPassOk = false
-    setStatus(e instanceof AuthError ? 'sign-in' : 'error')
+    setStatus(e instanceof FolderError ? 'no-folder' : e instanceof AuthError ? 'sign-in' : 'error')
   }
 }
 
@@ -226,6 +229,16 @@ export function startSync(store: SyncStore): void {
   setLocalChangeListener(onLocalChange)
   onlineHandler = () => void syncNow()
   window.addEventListener('online', onlineHandler)
+  // Resuming a backgrounded PWA fires no 'online'; pull what other devices wrote meanwhile.
+  lastResumeAt = -Infinity
+  visibilityHandler = () => {
+    if (document.visibilityState !== 'visible') return
+    const now = Date.now()
+    if (now - lastResumeAt < RESUME_THROTTLE_MS) return
+    lastResumeAt = now
+    void syncNow()
+  }
+  document.addEventListener('visibilitychange', visibilityHandler)
   void syncNow()
 }
 
@@ -242,5 +255,7 @@ export function stopSync(): void {
   setLocalChangeListener(() => {})
   if (onlineHandler) window.removeEventListener('online', onlineHandler)
   onlineHandler = undefined
+  if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler)
+  visibilityHandler = undefined
   setStatus('pending')
 }

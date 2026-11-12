@@ -31,6 +31,12 @@ export function resetSyncSessionForTests(): void {
 /** Called once from main.tsx. Also covers recovery after iOS evicts the local DB: the first pass pulls everything. */
 export async function bootSync(): Promise<void> {
   preloadGsi()
+  // Ask the browser not to evict our IndexedDB under storage pressure (best effort; iOS may ignore it).
+  try {
+    void navigator.storage?.persist?.()?.catch(() => {})
+  } catch {
+    // unsupported or blocked: nothing to do
+  }
   try {
     await ensureSyncStarted()
   } catch {
