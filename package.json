@@ -19,6 +19,8 @@
     "react-router-dom": "^7.18.5"
   },
   "devDependencies": {
+    "@emnapi/core": "2.0.0-beta.2",
+    "@emnapi/runtime": "2.0.0-beta.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.9",
