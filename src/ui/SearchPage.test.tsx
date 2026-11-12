@@ -98,6 +98,7 @@ beforeEach(async () => {
         text: 'Replaced front brake pads',
         tags: ['repair'],
       }),
+      entry('e4', { text: 'Used (Loctite 243 for $85 shop bolts' }),
       entry('e3', { vehicleId: 'v2', text: 'Fork rebound set to 8 clicks', tags: ['setup'] }),
     ],
     issues: [issue('i1', { title: 'Motor mount creak' })],
@@ -190,5 +191,26 @@ describe('SearchPage', () => {
     expect(screen.getByLabelText('Vehicle')).toHaveValue('v2')
     expect(screen.getByRole('button', { name: 'repair' })).toHaveAttribute('aria-pressed', 'true')
     expect(await screen.findByRole('link', { name: /brake pads/ })).toBeInTheDocument()
+  })
+
+  test('regex-special queries match literally and the original-case text is marked', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.type(box(), '(loctite')
+    const link = await screen.findByRole('link', { name: /Loctite 243/ })
+    expect(within(link).getByText('(Loctite', { selector: 'mark' })).toBeInTheDocument()
+    await user.clear(box())
+    await user.type(box(), '$85')
+    const link2 = await screen.findByRole('link', { name: /shop bolts/ })
+    expect(within(link2).getByText('$85', { selector: 'mark' })).toBeInTheDocument()
+  })
+
+  test('typing keeps every character and writes the query to the URL', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.type(box(), '14nm')
+    expect(box()).toHaveValue('14nm')
+    expect(screen.getByTestId('where')).toHaveTextContent('/search?q=14nm')
+    expect(await screen.findByRole('link', { name: /bushings/ })).toBeInTheDocument()
   })
 })

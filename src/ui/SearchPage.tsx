@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { readAll } from '../db/repo'
 import { formatEntryDate } from '../model/dates'
@@ -46,7 +46,9 @@ function highlight(snippet: string, query: string): ReactNode[] {
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
-  const q = params.get('q') ?? ''
+  // The box is driven by local state so typing never waits on the router; the URL is only read
+  // for q on mount and written to on every change.
+  const [q, setQ] = useState(() => params.get('q') ?? '')
   const vehicleId = params.get('v') ?? ''
   const tagParam = params.get('t')
   const tag = TAGS.find((t) => t === tagParam)
@@ -71,12 +73,17 @@ export default function SearchPage() {
 
   // Replace rather than push, so one Back leaves the search instead of undoing each keystroke.
   function update(change: { q?: string; v?: string; t?: Tag | '' }) {
-    const next = new URLSearchParams(params)
-    for (const [key, value] of Object.entries(change)) {
-      if (value) next.set(key, value)
-      else next.delete(key)
-    }
-    setParams(next, { replace: true })
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const [key, value] of Object.entries(change)) {
+          if (value) next.set(key, value)
+          else next.delete(key)
+        }
+        return next
+      },
+      { replace: true },
+    )
   }
 
   const hasCriteria = q.trim() !== '' || vehicleId !== '' || tag !== undefined
@@ -92,7 +99,10 @@ export default function SearchPage() {
           autoFocus
           value={q}
           placeholder="Torque, rebound, shop, issue…"
-          onChange={(ev) => update({ q: ev.target.value })}
+          onChange={(ev) => {
+            setQ(ev.target.value)
+            update({ q: ev.target.value })
+          }}
         />
       </label>
       <label className="field">
