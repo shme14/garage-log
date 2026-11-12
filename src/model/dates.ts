@@ -12,6 +12,19 @@ export function toDate(d: EntryDate): Date {
   return new Date(y, m - 1, day)
 }
 
+/** A real calendar date: YYYY-MM-DD for 'day', YYYY-MM for 'month'. */
+export function isValidEntryDate(d: EntryDate): boolean {
+  const m =
+    d.precision === 'month'
+      ? /^(\d{4})-(0[1-9]|1[0-2])$/.exec(d.value)
+      : /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.value)
+  if (!m) return false
+  if (d.precision === 'month') return true
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  if (mo < 1 || mo > 12 || day < 1) return false
+  return day <= new Date(Date.UTC(y, mo, 0)).getUTCDate()
+}
+
 export function todayEntryDate(now: Date = new Date()): EntryDate {
   const y = now.getFullYear()
   const m = String(now.getMonth() + 1).padStart(2, '0')

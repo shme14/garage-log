@@ -216,6 +216,13 @@ describe('SettingsPage', () => {
     expect(alert).toHaveTextContent('changes-def.json')
   })
 
+  test('shows the no-folder status as "Choose folder"', () => {
+    sync.report = (fn) => (fn as Subscriber)('no-folder', undefined, [])
+    const { container } = renderPage()
+    const chip = container.querySelector('.chip-no-folder')
+    expect(chip).toHaveTextContent(/^Choose folder$/)
+  })
+
   test('has no warning or last-synced line when there is nothing to report', () => {
     sync.report = (fn) => (fn as Subscriber)('synced', undefined, [])
     renderPage()
@@ -382,6 +389,8 @@ describe('SettingsPage', () => {
         screen.queryByRole('button', { name: 'Create Garage Log folder' }),
       ).not.toBeInTheDocument()
       expect(google.setFolder).not.toHaveBeenCalled()
+      // the explanation survives the reload of the matches
+      expect(screen.getByRole('alert')).toHaveTextContent(/folder already exists/i)
     })
 
     test('changing the folder of a running sync triggers a sync instead of a second start', async () => {
@@ -461,6 +470,8 @@ describe('SettingsPage', () => {
     const stored = await db.entries.toArray()
     expect(stored.length).toBeGreaterThan(0)
     expect(stored.every((e) => e.createdBy === 'Jamie')).toBe(true)
+    // the imported records are uploaded right away, not after the next local edit
+    await waitFor(() => expect(google.syncNow).toHaveBeenCalledTimes(1))
   })
 
   test('shows why a bad file was refused and imports nothing', async () => {
@@ -474,5 +485,6 @@ describe('SettingsPage', () => {
 
     await user.upload(input, new File(['{not json'], 'seed.json', { type: 'application/json' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/not valid JSON/i))
+    expect(google.syncNow).not.toHaveBeenCalled()
   })
 })

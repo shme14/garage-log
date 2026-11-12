@@ -246,6 +246,64 @@ describe('EntryForm', () => {
     expect(saved?.updatedBy).toBe('Me')
   })
 
+  test('editing keeps readings for meters that are no longer on the vehicle', async () => {
+    await putRaw({
+      vehicles: [vehicle()],
+      entries: [entry('e9', { odo: 150000, gone: 77 }, { text: 'old text' })],
+    })
+    const user = userEvent.setup()
+    renderForm('/entry/e9/edit')
+    const odo = await screen.findByLabelText(/Odometer/)
+    await waitFor(() => expect(odo).toHaveValue(150000))
+    await user.clear(odo)
+    await user.type(odo, '151000')
+    await user.type(screen.getByLabelText('Entry text'), ' more')
+    await save(user)
+
+    const saved = (await db.entries.toArray()).find((e) => e.id === 'e9')
+    expect(saved?.readings).toEqual({ odo: 151000, gone: 77 })
+  })
+
+  test('the form does not use browser validation; cost accepts any decimal', async () => {
+    await seedGarage()
+    renderForm()
+    await screen.findByLabelText('Entry text')
+    expect(document.querySelector('form')).toHaveAttribute('novalidate')
+    expect(screen.getByLabelText('Cost (CAD)')).toHaveAttribute('step', 'any')
+  })
+
+  test('meter keyboards: decimal for hours, numeric for km', async () => {
+    await seedGarage()
+    renderForm()
+    expect(await screen.findByLabelText(/Odometer/)).toHaveAttribute('inputmode', 'numeric')
+    expect(screen.getByLabelText(/Engine hours/)).toHaveAttribute('inputmode', 'decimal')
+  })
+
+  test('a malformed month blocks Save with a hint and a placeholder', async () => {
+    // jsdom sanitizes month inputs, so the bad value comes from a stored entry; Firefox and
+    // desktop Safari show the same state when the user types free text.
+    await putRaw({
+      vehicles: [vehicle()],
+      entries: [entry('e9', {}, { date: { precision: 'month', value: 'Jun 2024' } })],
+    })
+    renderForm('/entry/e9/edit')
+    const date = await screen.findByLabelText('Date')
+    expect(date).toHaveAttribute('placeholder', 'YYYY-MM')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByText('Use YYYY-MM')).toBeVisible()
+  })
+
+  test('a malformed day blocks Save with a hint', async () => {
+    await putRaw({
+      vehicles: [vehicle()],
+      entries: [entry('e9', {}, { date: { precision: 'day', value: '2026-02-30' } })],
+    })
+    renderForm('/entry/e9/edit')
+    await screen.findByLabelText('Date')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByText('Use YYYY-MM-DD')).toBeVisible()
+  })
+
   test('preselects and opens the issue from the query string', async () => {
     await putRaw({ vehicles: [vehicle()], issues: [issue('i1', 'open'), issue('i2', 'resolved')] })
     renderForm('/entry/new?issue=i1')

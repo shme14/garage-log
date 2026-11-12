@@ -117,9 +117,9 @@ function SyncSection() {
   }, [])
 
   // Lists the Garage Log folders this account can see. It never picks one by itself.
-  async function loadMatches() {
+  async function loadMatches(keepError = false) {
     setBusy(true)
-    setError(undefined)
+    if (!keepError) setError(undefined)
     try {
       setMatches(await findFolders())
     } catch (e) {
@@ -185,7 +185,7 @@ function SyncSection() {
     } catch (e) {
       setError(errorMessage(e))
       // Most likely a folder turned up since we looked: show what is there instead.
-      await loadMatches()
+      await loadMatches(true)
     }
   }
 
@@ -356,6 +356,7 @@ function ImportSection() {
       }
       const count = await loadSeed(json, await getEditContext())
       setResult({ ok: true, count })
+      void syncNow() // upload the import now instead of waiting for the next local edit
     } catch (err) {
       setResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
     } finally {

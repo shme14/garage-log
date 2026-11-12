@@ -277,10 +277,22 @@ describe('loadSeed', () => {
       expect(r.updatedByDevice).toBe('dev-import')
       expect(r.updatedBy).toBe('Tester')
       expect(r.deleted).toBe(false)
-      expect(r.updatedAt).toBe(r.createdAt)
     }
+    // updatedAt is in the distant past (+ file position in ms) so that if the seed is ever loaded
+    // on a second empty device, its records lose to any real edit; createdAt is now + position.
+    const stampOf = (r: { updatedAt: string; createdAt: string }) => ({
+      u: Date.parse(r.updatedAt) - Date.parse('2000-01-01T00:00:00.000Z'),
+      c: Date.parse(r.createdAt) - now.getTime(),
+    })
+    for (const r of all) {
+      const { u, c } = stampOf(r)
+      expect(r.updatedAt.startsWith('2000-01-01T00:00:00.')).toBe(true)
+      expect(u).toBe(c) // same file position
+    }
+    expect(Math.max(...all.map((r) => stampOf(r).u))).toBe(total - 1)
     for (const e of stored.entries) expect(e.createdBy).toBe('Tester')
     for (const v of stored.vehicles) expect(v.infoUpdatedAt).toBe(v.createdAt)
+    expect(all.every((r) => r.updatedAt < r.createdAt)).toBe(true)
 
     // Stamps are ctx.now + file position in ms, so same-date entries keep the note's order.
     const first = stored.vehicles.find((v) => v.id === s.vehicles[0].id)!

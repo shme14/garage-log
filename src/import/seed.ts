@@ -26,6 +26,8 @@ export interface SeedSet {
 
 /** File order, which is also the stamping order. */
 const TABLES: TableName[] = ['vehicles', 'issues', 'serviceItems', 'todos', 'entries']
+/** Base updatedAt of seeded records: older than any real edit. */
+const SEED_UPDATED_AT = Date.UTC(2000, 0, 1)
 const KINDS = ['truck', 'car', 'bike', 'ebike', 'other']
 const STATUSES = ['open', 'parked', 'resolved']
 
@@ -200,19 +202,20 @@ export function validateSeed(json: unknown): SeedSet {
 }
 
 /**
- * Validates the seed, then writes every record stamped with `ctx`: createdAt/updatedAt are
- * ctx.now + its position in the file in ms (so same-date entries keep the note's order).
- * Refuses if the garage already has a live vehicle. Returns the number of records written.
+ * Validates the seed, then writes every record stamped with `ctx`: createdAt is ctx.now + its
+ * position in the file in ms (so same-date entries keep the note's order). updatedAt is
+ * `SEED_UPDATED_AT` + the same offset, far in the past, so that if the seed is ever loaded on a
+ * second empty device its records lose to any real edit instead of overwriting it. Refuses if the garage already has a live vehicle. Returns the number of records written.
  */
 export async function loadSeed(json: unknown, ctx: EditContext): Promise<number> {
   const seed = validateSeed(json)
   const start = (ctx.now ?? new Date()).getTime()
   let i = 0
   const stamp = () => {
-    const ts = new Date(start + i++).toISOString()
+    const offset = i++
     return {
-      createdAt: ts,
-      updatedAt: ts,
+      createdAt: new Date(start + offset).toISOString(),
+      updatedAt: new Date(SEED_UPDATED_AT + offset).toISOString(),
       updatedBy: ctx.user,
       updatedByDevice: ctx.deviceId,
       deleted: false,

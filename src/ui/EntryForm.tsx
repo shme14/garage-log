@@ -10,7 +10,7 @@ import {
   update,
   vehiclesLive,
 } from '../db/repo'
-import { todayEntryDate } from '../model/dates'
+import { isValidEntryDate, todayEntryDate } from '../model/dates'
 import {
   TAGS,
   type BaseRecord,
@@ -166,7 +166,10 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
     (i) => i.status !== 'resolved' || i.id === issueChoice,
   )
 
-  const canSave = text.trim() !== '' && date.value !== '' && vd !== undefined && !saving
+  // Empty text is the only thing that blocks Save, plus a malformed date (desktop Firefox/Safari
+  // show type="month" as free text), which would corrupt sorting and sync.
+  const dateOk = isValidEntryDate(date)
+  const canSave = text.trim() !== '' && dateOk && vd !== undefined && !saving
 
   function changeVehicle(next: string) {
     setVehicleId(next)
@@ -201,6 +204,11 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
       // (then the due calculation needs the reading). Edits keep every non-empty field.
       const completing = serviceIds.length > 0
       const readings: Record<string, number> = {}
+      if (entry) {
+        // Keep readings for meters that are no longer on the vehicle; the form cannot show them.
+        const known = new Set(vehicle.meters.map((m) => m.id))
+        for (const [key, n] of Object.entries(entry.readings)) if (!known.has(key)) readings[key] = n
+      }
       for (const m of vehicle.meters) {
         const n = parseNum(shown(m.id))
         if (n === undefined) continue
@@ -258,7 +266,7 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
   }
 
   return (
-    <form className="entry-form" onSubmit={onSubmit}>
+    <form className="entry-form" noValidate onSubmit={onSubmit}>
       <h2 className="entry-title">{editing ? 'Edit entry' : 'New entry'}</h2>
 
       <label className="field">
@@ -273,15 +281,23 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
       </label>
 
       <div className="field-row">
-        <label className="field field-grow">
-          <span className="field-label">Date</span>
+        <div className="field field-grow">
+          <label className="field-label" htmlFor="entry-date">
+            Date
+          </label>
           <input
+            id="entry-date"
             type={date.precision === 'month' ? 'month' : 'date'}
             value={date.value}
-            required
+            placeholder={date.precision === 'month' ? 'YYYY-MM' : 'YYYY-MM-DD'}
             onChange={(e) => setDate({ ...date, value: e.target.value })}
           />
-        </label>
+          {date.value !== '' && !dateOk && (
+            <p className="field-warn" role="status">
+              {date.precision === 'month' ? 'Use YYYY-MM' : 'Use YYYY-MM-DD'}
+            </p>
+          )}
+        </div>
         <label className="check">
           <input
             type="checkbox"
@@ -306,7 +322,7 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
                 <input
                   id={`meter-${m.id}`}
                   type="number"
-                  inputMode="numeric"
+                  inputMode={m.unit === 'h' ? 'decimal' : 'numeric'}
                   step="any"
                   value={shown(m.id)}
                   onChange={(e) => setTyped({ ...typed, [m.id]: e.target.value })}
@@ -394,7 +410,7 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
           <input
             type="number"
             inputMode="decimal"
-            step="0.01"
+            step="any"
             min="0"
             value={cost}
             onChange={(e) => setCost(e.target.value)}
