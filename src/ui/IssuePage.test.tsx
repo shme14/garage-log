@@ -103,7 +103,11 @@ describe('IssuePage', () => {
     })
     renderPage()
     await screen.findByText('Newest')
-    const texts = screen.getAllByRole('article').map((a) => a.textContent ?? '')
+    // Each log row is a single link to the entry's edit screen.
+    const rows = screen
+      .getAllByRole('link')
+      .filter((a) => /^\/entry\/[^/]+\/edit$/.test(a.getAttribute('href') ?? ''))
+    const texts = rows.map((a) => a.textContent ?? '')
     expect(texts).toHaveLength(3)
     const order = ['Oldest', 'Middle', 'Newest']
     order.forEach((t, i) => expect(texts[i]).toContain(t))

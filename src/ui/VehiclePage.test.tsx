@@ -82,7 +82,19 @@ function renderPage(url = '/vehicle/v1') {
   )
 }
 
-const articleTexts = () => screen.getAllByRole('article').map((a) => a.textContent ?? '')
+// A log row is one link to the entry's edit screen.
+const entryRows = () =>
+  screen
+    .getAllByRole('link')
+    .filter((a) => /^\/entry\/[^/]+\/edit$/.test(a.getAttribute('href') ?? ''))
+const rowTexts = () => entryRows().map((a) => a.textContent ?? '')
+
+/** Expand a collapsed summary pill by its visible text. */
+async function expand(user: ReturnType<typeof userEvent.setup>, label: string | RegExp) {
+  const pill = await screen.findByText(label)
+  await user.click(pill)
+  return pill.closest('details') as HTMLDetailsElement
+}
 
 beforeEach(async () => {
   await Promise.all([
@@ -119,7 +131,7 @@ describe('VehiclePage log', () => {
     })
     renderPage()
     await screen.findByText('Newest')
-    const texts = articleTexts()
+    const texts = rowTexts()
     expect(texts).toHaveLength(5)
     const order = ['Newest', 'October month', 'October first', 'June month', 'May day']
     order.forEach((t, i) => expect(texts[i]).toContain(t))
@@ -130,7 +142,7 @@ describe('VehiclePage log', () => {
     expect(screen.queryByText('Other vehicle')).not.toBeInTheDocument()
   })
 
-  test('entry card shows readings, tags, text, cost, shop, author, issue link and actions', async () => {
+  test('entry row is one link with readings, tags, text, cost, shop, author and issue title', async () => {
     await putRaw({
       vehicles: [
         vehicle({
@@ -153,108 +165,98 @@ describe('VehiclePage log', () => {
       ],
     })
     renderPage()
-    const card = await screen.findByRole('article')
-    expect(within(card).getByText('Odometer')).toBeInTheDocument()
-    expect(within(card).getByText('159,500 km')).toBeInTheDocument()
-    expect(within(card).getByText('Engine hours')).toBeInTheDocument()
-    expect(within(card).getByText('2,566 h')).toBeInTheDocument()
-    expect(within(card).getByText('repair')).toBeInTheDocument()
-    expect(within(card).getByText('mod')).toBeInTheDocument()
+    await screen.findByText('Oct 1, 2026')
+    const [row] = entryRows()
+    expect(row).toHaveAttribute('href', '/entry/e1/edit')
+    expect(within(row).getByText('Odometer')).toBeInTheDocument()
+    expect(within(row).getByText('159,500 km')).toBeInTheDocument()
+    expect(within(row).getByText('Engine hours')).toBeInTheDocument()
+    expect(within(row).getByText('2,566 h')).toBeInTheDocument()
+    expect(within(row).getByText('repair')).toBeInTheDocument()
+    expect(within(row).getByText('mod')).toBeInTheDocument()
     // Line breaks live in the text node (CSS pre-wrap shows them); getByText would normalise them.
-    expect(card.querySelector('.entry-text')?.textContent).toBe('Line one\nLine two')
-    expect(within(card).getByText('$85.00')).toBeInTheDocument()
-    expect(within(card).getByText('Canadian Tire')).toBeInTheDocument()
-    expect(within(card).getByText(/by Jamie/)).toBeInTheDocument()
-    await waitFor(() =>
-      expect(within(card).getByRole('link', { name: 'Motor mount creak' })).toHaveAttribute(
-        'href',
-        '/issue/i1',
-      ),
-    )
-    expect(within(card).getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/entry/e1/edit')
-    expect(within(card).getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+    expect(row.querySelector('.entry-text')?.textContent).toBe('Line one\nLine two')
+    expect(within(row).getByText('$85.00')).toBeInTheDocument()
+    expect(within(row).getByText('Canadian Tire')).toBeInTheDocument()
+    expect(within(row).getByText(/by Jamie/)).toBeInTheDocument()
+    // The issue title is plain text inside the row (a link inside a link is invalid HTML).
+    await waitFor(() => expect(within(row).getByText('Motor mount creak')).toBeInTheDocument())
+    expect(within(row).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  test('rows have no Edit or Delete buttons', async () => {
+    await putRaw({ vehicles: [vehicle()], entries: [entry('e1'), entry('e2')] })
+    renderPage()
+    await screen.findAllByText(/^entry e/)
+    expect(entryRows()).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument()
   })
 
   test('single-meter readings omit the meter name', async () => {
     await putRaw({ vehicles: [vehicle()], entries: [entry('e1', { readings: { odo: 1200 } })] })
     renderPage()
-    const card = await screen.findByRole('article')
-    expect(within(card).getByText('1,200 km')).toBeInTheDocument()
-    expect(within(card).queryByText('Odometer')).not.toBeInTheDocument()
+    await screen.findByText('1,200 km')
+    const [row] = entryRows()
+    expect(within(row).getByText('1,200 km')).toBeInTheDocument()
+    expect(within(row).queryByText('Odometer')).not.toBeInTheDocument()
   })
 
-  test('Add entry links to quick entry for this vehicle', async () => {
+  test('+ Entry links to quick entry for this vehicle', async () => {
     await putRaw({ vehicles: [vehicle()] })
     renderPage()
     const link = await screen.findByRole('link', { name: 'Add entry' })
     expect(link).toHaveAttribute('href', '/entry/new?vehicle=v1')
+    expect(link).toHaveTextContent('+ Entry')
   })
 })
 
-describe('VehiclePage undo delete', () => {
-  test('delete shows Undo and restores within 5s', async () => {
-    await putRaw({ vehicles: [vehicle()], entries: [entry('e1', { text: 'Rotated tires' })] })
-    const user = userEvent.setup()
-    renderPage()
-    await screen.findByText('Rotated tires')
-
-    await user.click(screen.getByRole('button', { name: 'Delete' }))
-    await waitFor(() => expect(screen.queryByText('Rotated tires')).not.toBeInTheDocument())
-    expect(await screen.findByText(/Entry deleted/)).toBeInTheDocument()
-    expect((await db.entries.get('e1'))?.deleted).toBe(true)
-
-    await user.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByText('Rotated tires')).toBeInTheDocument()
-    expect((await db.entries.get('e1'))?.deleted).toBe(false)
-    expect(screen.queryByText(/Entry deleted/)).not.toBeInTheDocument()
-  })
-
+describe('VehiclePage undo delete (to-dos)', () => {
+  // Entry delete lives on the edit screen (EntryForm tests); the app-wide toast is shared.
   test('toast is armed for 5000 ms, then disappears and the delete stays', async () => {
-    await putRaw({ vehicles: [vehicle()], entries: [entry('e1', { text: 'Rotated tires' })] })
+    await putRaw({ vehicles: [vehicle()], todos: [todo('t1', { text: 'Rotate tires' })] })
     // Fake timers would stall Testing Library's own polling, so observe the real timer instead:
     // it must be requested for exactly 5000 ms, and firing its callback must dismiss the toast.
     const spy = vi.spyOn(globalThis, 'setTimeout')
     const user = userEvent.setup()
     renderPage()
-    await screen.findByText('Rotated tires')
-    await user.click(screen.getByRole('button', { name: 'Delete' }))
-    expect(await screen.findByText(/Entry deleted/)).toBeInTheDocument()
+    await expand(user, /1 to-do$/)
+    await user.click(await screen.findByRole('button', { name: 'Delete todo Rotate tires' }))
+    expect(await screen.findByText(/Todo deleted/)).toBeInTheDocument()
 
     const armed = spy.mock.calls.filter(([, ms]) => ms === 5000)
     expect(armed).toHaveLength(1)
     await act(async () => {
       ;(armed[0][0] as () => void)()
     })
-    expect(screen.queryByText(/Entry deleted/)).not.toBeInTheDocument()
-    expect((await db.entries.get('e1'))?.deleted).toBe(true)
+    expect(screen.queryByText(/Todo deleted/)).not.toBeInTheDocument()
+    expect((await db.todos.get('t1'))?.deleted).toBe(true)
   })
 
   test('a second delete replaces the toast; the first delete stays deleted', async () => {
     await putRaw({
       vehicles: [vehicle()],
-      entries: [
-        entry('e1', { text: 'First entry', date: { precision: 'day', value: '2026-10-02' } }),
-        entry('e2', { text: 'Second entry' }),
-      ],
+      todos: [todo('t1', { text: 'First todo' }), todo('t2', { text: 'Second todo' })],
     })
     const user = userEvent.setup()
     renderPage()
-    await screen.findByText('First entry')
-    await user.click(screen.getAllByRole('button', { name: 'Delete' })[0])
-    await waitFor(() => expect(screen.queryByText('First entry')).not.toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: 'Delete' }))
-    await waitFor(() => expect(screen.queryByText('Second entry')).not.toBeInTheDocument())
-    expect(screen.getAllByText(/Entry deleted/)).toHaveLength(1)
+    await expand(user, /2 to-dos$/)
+    await user.click(await screen.findByRole('button', { name: 'Delete todo First todo' }))
+    await waitFor(() => expect(screen.queryByText('First todo')).not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Delete todo Second todo' }))
+    await waitFor(() => expect(screen.queryByText('Second todo')).not.toBeInTheDocument())
+    expect(screen.getAllByText(/Todo deleted/)).toHaveLength(1)
 
     await user.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByText('Second entry')).toBeInTheDocument()
-    expect(screen.queryByText('First entry')).not.toBeInTheDocument()
-    expect((await db.entries.get('e1'))?.deleted).toBe(true)
+    expect(await screen.findByText('Second todo')).toBeInTheDocument()
+    expect(screen.queryByText('First todo')).not.toBeInTheDocument()
+    expect((await db.todos.get('t1'))?.deleted).toBe(true)
   })
 })
 
 describe('VehiclePage header', () => {
-  test('lists open issues as links and parks the rest under a collapsed section', async () => {
+  test('open issues pill expands to links; parked sit in a nested collapsed section', async () => {
     await putRaw({
       vehicles: [vehicle()],
       issues: [
@@ -264,8 +266,13 @@ describe('VehiclePage header', () => {
         issue('i4', 'open', { title: 'Gone', deleted: true }),
       ],
     })
+    const user = userEvent.setup()
     renderPage()
-    expect(await screen.findByRole('link', { name: 'Creak' })).toHaveAttribute('href', '/issue/i1')
+    const details = await expand(user, '1 open issue')
+    expect(details).toHaveAttribute('open')
+    const creak = await screen.findByRole('link', { name: 'Creak' })
+    expect(creak).toBeVisible()
+    expect(creak).toHaveAttribute('href', '/issue/i1')
     const parked = screen.getByText('Parked (1)').closest('details')!
     expect(parked).not.toHaveAttribute('open')
     expect(within(parked).getByRole('link', { name: 'Parked thing', hidden: true })).toHaveAttribute(
@@ -276,10 +283,59 @@ describe('VehiclePage header', () => {
     expect(screen.queryByText('Gone')).not.toBeInTheDocument()
   })
 
+  test('summaries start collapsed and count open issues (plural) and to-dos', async () => {
+    await putRaw({
+      vehicles: [vehicle()],
+      issues: [
+        issue('i1', 'open', { title: 'Creak' }),
+        issue('i2', 'open', { title: 'Rattle' }),
+        issue('i3', 'parked'),
+      ],
+      todos: [
+        todo('t1'),
+        todo('t2'),
+        todo('t3', { done: true }),
+        todo('t4', { issueId: 'i1' }),
+        todo('t5', { deleted: true }),
+      ],
+    })
+    renderPage()
+    const issues = (await screen.findByText('2 open issues')).closest('details')!
+    expect(issues).not.toHaveAttribute('open')
+    expect(await screen.findByText('2 to-dos')).toBeInTheDocument()
+    expect(screen.getByText('2 to-dos').closest('details')).not.toHaveAttribute('open')
+    // Collapsed: the list is in the DOM but not visible until the pill is opened.
+    expect(screen.getByRole('link', { name: 'Creak', hidden: true })).not.toBeVisible()
+  })
+
+  test('no open issues and no to-dos: plain text, and the to-do pill still opens to Add todo', async () => {
+    await putRaw({ vehicles: [vehicle()] })
+    const user = userEvent.setup()
+    renderPage()
+    const none = await screen.findByText('No open issues')
+    expect(none.closest('details')).toBeNull()
+    await expand(user, 'No to-dos')
+    expect(await screen.findByRole('textbox', { name: 'Add todo' })).toBeVisible()
+  })
+
+  test('only parked issues: a Parked pill instead of the no-issues text', async () => {
+    await putRaw({ vehicles: [vehicle()], issues: [issue('i2', 'parked', { title: 'Parked thing' })] })
+    const user = userEvent.setup()
+    renderPage()
+    await expand(user, 'Parked (1)')
+    expect(screen.queryByText('No open issues')).not.toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Parked thing' })).toHaveAttribute(
+      'href',
+      '/issue/i2',
+    )
+  })
+
   test('has an Edit vehicle link and tab links', async () => {
     await putRaw({ vehicles: [vehicle()] })
     renderPage('/vehicle/v1/info')
-    expect(await screen.findByRole('link', { name: 'Edit vehicle' })).toHaveAttribute(
+    const edit = await screen.findByRole('link', { name: 'Edit vehicle' })
+    expect(edit).toHaveTextContent('Edit')
+    expect(edit).toHaveAttribute(
       'href',
       '/vehicles/v1/edit',
     )
@@ -302,7 +358,7 @@ describe('VehiclePage header', () => {
     },
   )
 
-  test('service items show a text state pill and remaining amount or due date', async () => {
+  test('service items are pills with name and state label; expanding shows the remainder', async () => {
     await putRaw({
       vehicles: [vehicle()],
       serviceItems: [
@@ -323,20 +379,30 @@ describe('VehiclePage header', () => {
         }),
       ],
     })
+    const user = userEvent.setup()
     renderPage()
-    const row = async (name: string) =>
-      (await screen.findByText(name, { selector: '.service-name' })).closest('li') as HTMLElement
-    await waitFor(async () =>
-      expect(within(await row('Oil change')).getByText('OK')).toBeInTheDocument(),
-    )
-    expect(within(await row('Oil change')).getByText('1,800 km left')).toBeInTheDocument()
-    expect(within(await row('Tire rotation')).getByText('Due soon')).toBeInTheDocument()
-    expect(within(await row('Tire rotation')).getByText('500 km left')).toBeInTheDocument()
-    expect(within(await row('Brake fluid')).getByText('Overdue')).toBeInTheDocument()
-    expect(within(await row('Brake fluid')).getByText('8,200 km over')).toBeInTheDocument()
-    expect(within(await row('Air filter')).getByText('Never done')).toBeInTheDocument()
-    expect(within(await row('Inspection')).getByText('OK')).toBeInTheDocument()
-    expect(within(await row('Inspection')).getByText('due Jul 1, 2027')).toBeInTheDocument()
+    const pill = async (text: string) => (await screen.findByText(text)).closest('details')!
+    // Same state labels and colour classes as the Service tab; text, never colour alone.
+    const oil = await pill('Oil change: OK')
+    expect(within(oil).getByText('Oil change: OK')).toHaveClass('pill-ok')
+    expect(within(await pill('Tire rotation: Due soon')).getByText('Tire rotation: Due soon')).toHaveClass('pill-soon')
+    expect(within(await pill('Brake fluid: Overdue')).getByText('Brake fluid: Overdue')).toHaveClass('pill-over')
+    expect(within(await pill('Air filter: Never done')).getByText('Air filter: Never done')).toHaveClass('pill-never')
+    expect(oil).not.toHaveAttribute('open')
+
+    await user.click(screen.getByText('Oil change: OK'))
+    expect(await within(oil).findByText('1,800 km left')).toBeVisible()
+    await user.click(screen.getByText('Brake fluid: Overdue'))
+    expect(await screen.findByText('8,200 km over')).toBeVisible()
+    await user.click(screen.getByText('Inspection: OK'))
+    expect(await screen.findByText('due Jul 1, 2027')).toBeVisible()
+  })
+
+  test('no service items: no service pills', async () => {
+    await putRaw({ vehicles: [vehicle()] })
+    renderPage()
+    await screen.findByText('No open issues')
+    expect(screen.queryByText(/: (OK|Due soon|Overdue|Never done)$/)).not.toBeInTheDocument()
   })
 })
 
@@ -352,6 +418,7 @@ describe('VehiclePage todos', () => {
     })
     const user = userEvent.setup()
     renderPage()
+    await expand(user, '1 to-do')
     const box = await screen.findByRole('checkbox', { name: 'Check hubs' })
     expect(box).not.toBeChecked()
     expect(screen.queryByText('Already done')).not.toBeInTheDocument()
@@ -374,6 +441,7 @@ describe('VehiclePage todos', () => {
     await putRaw({ vehicles: [vehicle()] })
     const user = userEvent.setup()
     renderPage()
+    await expand(user, 'No to-dos')
     await user.type(await screen.findByRole('textbox', { name: 'Add todo' }), '  Buy wipers ')
     await user.click(screen.getByRole('button', { name: 'Add todo' }))
     expect(await screen.findByRole('checkbox', { name: 'Buy wipers' })).toBeInTheDocument()

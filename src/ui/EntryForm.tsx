@@ -22,6 +22,7 @@ import {
 } from '../model/types'
 import { currentReading } from '../service/due'
 import { getLastVehicleId, setLastVehicleId } from './lastVehicle'
+import { useUndoDelete } from './UndoToast'
 
 const NEW_ISSUE = '__new__'
 
@@ -109,6 +110,7 @@ interface BodyProps {
 
 function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now }: BodyProps) {
   const navigate = useNavigate()
+  const undoDelete = useUndoDelete()
   const editing = entry !== undefined
 
   const [vehicleId, setVehicleId] = useState(initialVehicleId)
@@ -191,6 +193,13 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
     const idx = (window.history.state as { idx?: number } | null)?.idx
     if (typeof idx === 'number' && idx > 0) navigate(-1)
     else navigate(`/vehicle/${vehicleId}`, { replace: true })
+  }
+
+  // Soft delete with the app-wide Undo toast (it outlives this screen), then leave like Cancel.
+  function onDelete() {
+    if (!entry) return
+    undoDelete('entries', entry.id, 'Entry')
+    leave()
   }
 
   async function onSubmit(ev: FormEvent) {
@@ -436,6 +445,14 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
           Save
         </button>
       </div>
+
+      {editing && (
+        <div className="form-danger">
+          <button type="button" className="btn btn-danger" onClick={onDelete}>
+            Delete entry
+          </button>
+        </div>
+      )}
     </form>
   )
 }

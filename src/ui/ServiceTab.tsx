@@ -1,39 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { db, getEditContext } from '../db/db'
 import { create, update } from '../db/repo'
-import { formatEntryDate, todayEntryDate } from '../model/dates'
-import type { BaseRecord, Entry, ServiceItem, Vehicle } from '../model/types'
-import { dueStatus, type DueState } from '../service/due'
+import type { BaseRecord, ServiceItem, Vehicle } from '../model/types'
+import { num, serviceStatusParts, type StatusProps } from './serviceStatus'
 import { useUndoDelete } from './UndoToast'
 
-const PILL: Record<DueState, { label: string; className: string }> = {
-  ok: { label: 'OK', className: 'pill pill-ok' },
-  'due-soon': { label: 'Due soon', className: 'pill pill-soon' },
-  overdue: { label: 'Overdue', className: 'pill pill-over' },
-  'never-done': { label: 'Never done', className: 'pill pill-never' },
-}
-
-const num = (n: number) => n.toLocaleString('en-CA')
-
-interface StatusProps {
-  item: ServiceItem
-  vehicle: Vehicle
-  /** Only this vehicle's entries: the due calculation is not vehicle-scoped. */
-  entries: Entry[]
-  today: Date
-}
-
 /** Coloured state pill (the text label always carries the state) plus remaining amount / due date. */
-export function ServiceStatus({ item, vehicle, entries, today }: StatusProps) {
-  const info = dueStatus(item, vehicle, entries, today)
-  const pill = PILL[info.state]
-  const unit = vehicle.meters.find((m) => m.id === item.intervalMeterId)?.unit
-  const parts: string[] = []
-  if (info.remainingAmount !== undefined && unit) {
-    const r = info.remainingAmount
-    parts.push(r >= 0 ? `${num(r)} ${unit} left` : `${num(-r)} ${unit} over`)
-  }
-  if (info.dueDate) parts.push(`due ${formatEntryDate(todayEntryDate(info.dueDate))}`)
+export function ServiceStatus(props: StatusProps) {
+  const { pill, parts } = serviceStatusParts(props)
   return (
     <>
       <span className={pill.className}>{pill.label}</span>

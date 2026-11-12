@@ -1,12 +1,13 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { db } from '../db/db'
 import { putRaw } from '../db/repo'
 import type { Entry, Issue, ServiceItem, Vehicle } from '../model/types'
 import EntryForm from './EntryForm'
 import { getLastVehicleId } from './lastVehicle'
+import { UndoProvider } from './UndoToast'
 
 const base = {
   createdAt: '2026-01-01T00:00:00Z',
@@ -59,12 +60,14 @@ const NOW = new Date(2026, 10, 11)
 function renderForm(url = '/entry/new') {
   return render(
     <MemoryRouter initialEntries={[url]}>
-      <Routes>
-        <Route path="/entry/new" element={<EntryForm now={NOW} />} />
-        <Route path="/entry/:id/edit" element={<EntryForm now={NOW} />} />
-        <Route path="/vehicle/:id" element={<p>Vehicle page</p>} />
-        <Route path="/settings" element={<p>Settings page</p>} />
-      </Routes>
+      <UndoProvider>
+        <Routes>
+          <Route path="/entry/new" element={<EntryForm now={NOW} />} />
+          <Route path="/entry/:id/edit" element={<EntryForm now={NOW} />} />
+          <Route path="/vehicle/:id" element={<p>Vehicle page</p>} />
+          <Route path="/settings" element={<p>Settings page</p>} />
+        </Routes>
+      </UndoProvider>
     </MemoryRouter>,
   )
 }
@@ -89,6 +92,10 @@ beforeEach(async () => {
     db.todos.clear(),
     db.serviceItems.clear(),
   ])
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('EntryForm', () => {
@@ -337,5 +344,47 @@ describe('EntryForm', () => {
     const link = await screen.findByRole('link', { name: /settings/i })
     expect(link).toHaveAttribute('href', '/settings')
     expect(screen.queryByLabelText('Entry text')).not.toBeInTheDocument()
+  })
+
+  test('new entry has no Delete entry button', async () => {
+    await seedGarage()
+    renderForm()
+    await screen.findByLabelText('Entry text')
+    expect(screen.queryByRole('button', { name: 'Delete entry' })).not.toBeInTheDocument()
+  })
+
+  test('Delete entry soft-deletes, leaves the form, shows Undo and restores within 5s', async () => {
+    await putRaw({ vehicles: [vehicle()], entries: [entry('e9', { odo: 150000 }, { text: 'Rotated tires' })] })
+    const user = userEvent.setup()
+    renderForm('/entry/e9/edit')
+    await screen.findByLabelText('Entry text')
+    await user.click(screen.getByRole('button', { name: 'Delete entry' }))
+
+    // Left the form the same way Cancel does, with no confirm dialog; the toast outlives the screen.
+    await screen.findByText('Vehicle page')
+    expect(await screen.findByText(/Entry deleted/)).toBeInTheDocument()
+    expect((await db.entries.get('e9'))?.deleted).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }))
+    await waitFor(async () => expect((await db.entries.get('e9'))?.deleted).toBe(false))
+    expect(screen.queryByText(/Entry deleted/)).not.toBeInTheDocument()
+  })
+
+  test('the Undo toast is armed for 5000 ms, then disappears and the delete stays', async () => {
+    await putRaw({ vehicles: [vehicle()], entries: [entry('e9', { odo: 150000 })] })
+    const spy = vi.spyOn(globalThis, 'setTimeout')
+    const user = userEvent.setup()
+    renderForm('/entry/e9/edit')
+    await screen.findByLabelText('Entry text')
+    await user.click(screen.getByRole('button', { name: 'Delete entry' }))
+    expect(await screen.findByText(/Entry deleted/)).toBeInTheDocument()
+
+    const armed = spy.mock.calls.filter(([, ms]) => ms === 5000)
+    expect(armed).toHaveLength(1)
+    await act(async () => {
+      ;(armed[0][0] as () => void)()
+    })
+    expect(screen.queryByText(/Entry deleted/)).not.toBeInTheDocument()
+    expect((await db.entries.get('e9'))?.deleted).toBe(true)
   })
 })

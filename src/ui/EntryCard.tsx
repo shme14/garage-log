@@ -1,21 +1,21 @@
 import { useLiveQuery } from 'dexie-react-hooks'
+import { Fragment, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../db/db'
 import { formatEntryDate } from '../model/dates'
 import type { Entry, Vehicle } from '../model/types'
-import { useUndoDelete } from './UndoToast'
 
 const cad = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' })
 
 interface Props {
   entry: Entry
   vehicle: Vehicle
-  /** Show the linked issue's title as a link (omit on the issue page itself). */
+  /** Show the linked issue's title (as plain text: the row is itself a link). Omit on the issue page. */
   showIssue?: boolean
 }
 
+/** One dense log row; the whole row is the link to the entry's edit screen. */
 export default function EntryCard({ entry, vehicle, showIssue }: Props) {
-  const undoDelete = useUndoDelete()
   const issueId = showIssue ? entry.issueId : undefined
   const issue = useLiveQuery(
     async () => (issueId ? ((await db.issues.get(issueId)) ?? null) : null),
@@ -29,53 +29,60 @@ export default function EntryCard({ entry, vehicle, showIssue }: Props) {
     return typeof value === 'number' ? [{ meter: m, value }] : []
   })
 
-  return (
-    <article className="entry-card">
-      <header className="entry-head">
-        <span className="entry-date">{formatEntryDate(entry.date)}</span>
-        {readings.length > 0 && (
-          <span className="entry-readings">
-            {readings.map(({ meter, value }, i) => (
-              <span key={meter.id} className="reading">
-                {i > 0 && <span aria-hidden="true"> · </span>}
-                {named && <span className="reading-name">{meter.name} </span>}
-                <span>{`${value.toLocaleString('en-CA')} ${meter.unit}`}</span>
-              </span>
-            ))}
+  const parts: ReactNode[] = [
+    <span key="date" className="entry-date">
+      {formatEntryDate(entry.date)}
+    </span>,
+  ]
+  readings.forEach(({ meter, value }) =>
+    parts.push(
+      <span key={meter.id} className="reading">
+        {named && <span className="reading-name">{meter.name} </span>}
+        <span>{`${value.toLocaleString('en-CA')} ${meter.unit}`}</span>
+      </span>,
+    ),
+  )
+  if (entry.tags.length > 0) {
+    parts.push(
+      <span key="tags" className="entry-tags">
+        {entry.tags.map((t) => (
+          <span key={t} className="entry-tag">
+            {t}
           </span>
-        )}
-      </header>
-      {entry.tags.length > 0 && (
-        <ul className="tag-list">
-          {entry.tags.map((t) => (
-            <li key={t} className="tag-pill">
-              {t}
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="entry-text">{entry.text}</p>
-      {(entry.cost !== undefined || entry.shop) && (
-        <p className="entry-meta">
-          {entry.cost !== undefined && <span>{cad.format(entry.cost)}</span>}
-          {entry.cost !== undefined && entry.shop && <span aria-hidden="true"> · </span>}
-          {entry.shop && <span>{entry.shop}</span>}
-        </p>
-      )}
-      <p className="entry-meta muted">by {entry.createdBy}</p>
-      {issueId && (
-        <p className="entry-meta">
-          <Link to={`/issue/${issueId}`}>{issue ? issue.title : 'Issue'}</Link>
-        </p>
-      )}
-      <div className="entry-actions">
-        <Link to={`/entry/${entry.id}/edit`} className="btn">
-          Edit
-        </Link>
-        <button type="button" className="btn" onClick={() => undoDelete('entries', entry.id, 'Entry')}>
-          Delete
-        </button>
-      </div>
-    </article>
+        ))}
+      </span>,
+    )
+  }
+  if (entry.cost !== undefined || entry.shop) {
+    parts.push(
+      <span key="cost">
+        {entry.cost !== undefined && <span>{cad.format(entry.cost)}</span>}
+        {entry.cost !== undefined && entry.shop && ' '}
+        {entry.shop && <span>{entry.shop}</span>}
+      </span>,
+    )
+  }
+  if (issueId) {
+    parts.push(
+      <span key="issue" className="entry-issue">
+        {issue ? issue.title : 'Issue'}
+      </span>,
+    )
+  }
+  parts.push(<span key="by">by {entry.createdBy}</span>)
+
+  return (
+    <Link to={`/entry/${entry.id}/edit`} className="entry-row">
+      <span className="entry-meta">
+        {parts.map((part, i) => (
+          <Fragment key={i}>
+            {/* NBSP before the dot keeps it on the previous line when the row wraps. */}
+            {i > 0 && <span aria-hidden="true">{'\u00a0\u00b7 '}</span>}
+            {part}
+          </Fragment>
+        ))}
+      </span>
+      <span className="entry-text">{entry.text}</span>
+    </Link>
   )
 }
