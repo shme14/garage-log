@@ -5,6 +5,7 @@ import type { Entry, Vehicle } from '../model/types'
 import { emptySet, type RecordSet } from '../model/types'
 import {
   fileName,
+  isSyncRunning,
   startSync,
   stopSync,
   subscribeStatus,
@@ -497,4 +498,13 @@ test('stopSync removes the listener and timers', async () => {
   window.dispatchEvent(new Event('online'))
   await vi.advanceTimersByTimeAsync(10000)
   expect(list).toHaveBeenCalledTimes(1)
+})
+
+test('isSyncRunning is true only between startSync and stopSync', async () => {
+  expect(isSyncRunning()).toBe(false)
+  startSync(new MemoryStore())
+  expect(isSyncRunning()).toBe(true)
+  await waitForStatus('synced')
+  stopSync()
+  expect(isSyncRunning()).toBe(false)
 })

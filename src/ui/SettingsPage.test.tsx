@@ -12,11 +12,48 @@ type Subscriber = (s: SyncStatus, lastSynced?: string, skipped?: string[]) => vo
 // What the mocked sync engine reports to each new subscriber.
 const sync = vi.hoisted(() => ({ report: (_fn: unknown): void => {} }))
 
+interface Folder {
+  id: string
+  name: string
+  ownerEmail: string
+  shared: boolean
+}
+// State and spies behind the mocked auth / drive / boot modules.
+const google = vi.hoisted(() => ({
+  account: undefined as { name: string; email: string } | undefined,
+  folder: undefined as Folder | undefined,
+  matches: [] as Folder[],
+  signIn: vi.fn(),
+  signOut: vi.fn(),
+  findFolders: vi.fn(),
+  createFolder: vi.fn(),
+  setFolder: vi.fn(),
+  ensureSyncStarted: vi.fn(),
+  syncNow: vi.fn(),
+  preloadGsi: vi.fn(),
+}))
+
 vi.mock('../sync/engine', () => ({
   subscribeStatus: (fn: Subscriber) => {
     sync.report(fn)
     return () => {}
   },
+  syncNow: (...a: unknown[]) => google.syncNow(...a),
+}))
+vi.mock('../sync/auth', () => ({
+  getAccount: async () => google.account,
+  signIn: (...a: unknown[]) => google.signIn(...a),
+  signOut: (...a: unknown[]) => google.signOut(...a),
+  preloadGsi: () => google.preloadGsi(),
+}))
+vi.mock('../sync/drive', () => ({
+  getFolder: async () => google.folder,
+  findFolders: (...a: unknown[]) => google.findFolders(...a),
+  createFolder: (...a: unknown[]) => google.createFolder(...a),
+  setFolder: (...a: unknown[]) => google.setFolder(...a),
+}))
+vi.mock('../sync/boot', () => ({
+  ensureSyncStarted: (...a: unknown[]) => google.ensureSyncStarted(...a),
 }))
 
 /** A tiny synthetic seed file: 1 vehicle, 1 issue, 1 service item, 1 todo, 2 entries (6 records). */
@@ -93,6 +130,30 @@ function renderPage() {
 
 beforeEach(async () => {
   sync.report = (fn) => (fn as Subscriber)('pending')
+  google.account = undefined
+  google.folder = undefined
+  google.matches = []
+  google.signIn.mockReset().mockImplementation(async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    return google.account
+  })
+  google.signOut.mockReset().mockImplementation(async () => {
+    google.account = undefined
+    google.folder = undefined
+  })
+  google.findFolders.mockReset().mockImplementation(async () => google.matches)
+  google.createFolder.mockReset().mockImplementation(async () => ({
+    id: 'new-1',
+    name: 'Garage Log',
+    ownerEmail: 'jamie@example.com',
+    shared: false,
+  }))
+  google.setFolder.mockReset().mockImplementation(async (_id: string, info?: Folder) => {
+    google.folder = info
+  })
+  google.ensureSyncStarted.mockReset().mockResolvedValue(true)
+  google.syncNow.mockReset().mockResolvedValue(undefined)
+  google.preloadGsi.mockReset()
   await Promise.all([
     db.vehicles.clear(),
     db.entries.clear(),
@@ -205,11 +266,165 @@ describe('SettingsPage', () => {
     expect(revoke).toHaveBeenCalledWith('blob:fake-1')
   })
 
-  test('has no sign-in or Sync now controls yet', () => {
+  test('when not signed in it says so and offers Sign in only', async () => {
     renderPage()
-    expect(screen.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument()
+    expect(await screen.findByText('Not signed in')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Choose folder' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument()
   })
+
+  test('shows the signed-in account and the chosen folder with its owner', async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    google.folder = { id: 'f1', name: 'Garage Log', ownerEmail: 'owner@example.com', shared: true }
+    renderPage()
+    expect(await screen.findByText(/Jamie D/)).toHaveTextContent('jamie@example.com')
+    expect(await screen.findByText(/Folder: Garage Log/)).toHaveTextContent('owner@example.com')
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Choose folder' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument()
+  })
+
+  test('Sign in calls signIn, shows the account and lists folders to pick from (no auto-pick)', async () => {
+    google.matches = [
+      { id: 'f1', name: 'Garage Log', ownerEmail: 'owner@example.com', shared: true },
+    ]
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByText(/jamie@example.com/)).toBeInTheDocument()
+    expect(google.signIn).toHaveBeenCalledTimes(1)
+    expect(
+      await screen.findByRole('button', { name: /Garage Log.*owner@example.com/ }),
+    ).toBeInTheDocument()
+    expect(google.setFolder).not.toHaveBeenCalled()
+    expect(google.ensureSyncStarted).not.toHaveBeenCalled()
+  })
+
+  test('shows why a sign-in failed', async () => {
+    google.signIn.mockRejectedValue(new Error('popup_closed'))
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/popup_closed/)
+    expect(screen.getByText('Not signed in')).toBeInTheDocument()
+  })
+
+  describe('choosing a folder', () => {
+    beforeEach(() => {
+      google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    })
+
+    test('lists matches with owner and shared badge; a single match still needs a tap', async () => {
+      google.matches = [
+        { id: 'f1', name: 'Garage Log', ownerEmail: 'owner@example.com', shared: true },
+      ]
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Choose folder' }))
+      const pick = await screen.findByRole('button', { name: /owner@example.com/ })
+      expect(pick).toHaveTextContent('shared')
+      expect(google.setFolder).not.toHaveBeenCalled()
+      expect(
+        screen.queryByRole('button', { name: 'Create Garage Log folder' }),
+      ).not.toBeInTheDocument()
+
+      await user.click(pick)
+      await waitFor(() => expect(google.setFolder).toHaveBeenCalledWith('f1', google.matches[0]))
+      await waitFor(() => expect(google.ensureSyncStarted).toHaveBeenCalled())
+      expect(google.createFolder).not.toHaveBeenCalled()
+    })
+
+    test('lists several matches and picks the tapped one', async () => {
+      google.matches = [
+        { id: 'f1', name: 'Garage Log', ownerEmail: 'a@example.com', shared: false },
+        { id: 'f2', name: 'Garage Log', ownerEmail: 'b@example.com', shared: true },
+      ]
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Choose folder' }))
+      await user.click(await screen.findByRole('button', { name: /b@example.com/ }))
+      await waitFor(() => expect(google.setFolder).toHaveBeenCalledWith('f2', google.matches[1]))
+      expect(google.createFolder).not.toHaveBeenCalled()
+    })
+
+    test('offers Create only when no folder was found, and creates and selects it on tap', async () => {
+      google.matches = []
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Choose folder' }))
+      const create = await screen.findByRole('button', { name: 'Create Garage Log folder' })
+      expect(google.createFolder).not.toHaveBeenCalled()
+      await user.click(create)
+      await waitFor(() => expect(google.createFolder).toHaveBeenCalledTimes(1))
+      await waitFor(() =>
+        expect(google.setFolder).toHaveBeenCalledWith(
+          'new-1',
+          expect.objectContaining({ id: 'new-1' }),
+        ),
+      )
+      await waitFor(() => expect(google.ensureSyncStarted).toHaveBeenCalled())
+    })
+
+    test('if creating finds an existing folder after all, it shows the matches instead', async () => {
+      google.matches = []
+      google.createFolder.mockImplementation(async () => {
+        google.matches = [{ id: 'f9', name: 'Garage Log', ownerEmail: 'o@example.com', shared: true }]
+        throw new Error('A "Garage Log" folder already exists. Choose it instead.')
+      })
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Choose folder' }))
+      await user.click(await screen.findByRole('button', { name: 'Create Garage Log folder' }))
+      expect(await screen.findByRole('button', { name: /o@example.com/ })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Create Garage Log folder' }),
+      ).not.toBeInTheDocument()
+      expect(google.setFolder).not.toHaveBeenCalled()
+    })
+
+    test('changing the folder of a running sync triggers a sync instead of a second start', async () => {
+      google.matches = [{ id: 'f1', name: 'Garage Log', ownerEmail: 'o@example.com', shared: true }]
+      google.ensureSyncStarted.mockResolvedValue(false) // already running
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Choose folder' }))
+      await user.click(await screen.findByRole('button', { name: /o@example.com/ }))
+      await waitFor(() => expect(google.syncNow).toHaveBeenCalledTimes(1))
+    })
+
+    test('shows an error when listing folders fails', async () => {
+      google.findFolders.mockRejectedValue(new Error('Drive 500'))
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Choose folder' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Drive 500')
+      expect(
+        screen.queryByRole('button', { name: 'Create Garage Log folder' }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  test('Sync now starts sync if needed and then syncs', async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    google.folder = { id: 'f1', name: 'Garage Log', ownerEmail: 'o@example.com', shared: true }
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }))
+    await waitFor(() => expect(google.syncNow).toHaveBeenCalledTimes(1))
+    expect(google.ensureSyncStarted).toHaveBeenCalled()
+  })
+
+  test('Sign out calls signOut and goes back to Not signed in', async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+    expect(await screen.findByText('Not signed in')).toBeInTheDocument()
+    expect(google.signOut).toHaveBeenCalledTimes(1)
+  })
+
   test('offers the Keep import only while the garage has no live vehicles', async () => {
     await putRaw({ vehicles: [vehicle('v3', 'Deleted', { deleted: true })] })
     const { unmount } = renderPage()

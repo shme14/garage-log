@@ -126,6 +126,16 @@ a {
   color: var(--danger-text);
 }
 
+.chip-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* Layout */
 .app-main {
   max-width: 720px;

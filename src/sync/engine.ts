@@ -215,6 +215,11 @@ export async function syncNow(): Promise<void> {
   await p
 }
 
+/** True between startSync and stopSync. */
+export function isSyncRunning(): boolean {
+  return activeStore !== null
+}
+
 export function startSync(store: SyncStore): void {
   stopSync()
   activeStore = store

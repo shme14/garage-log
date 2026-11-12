@@ -5,7 +5,16 @@ import { db, getEditContext, getUser, setUser } from '../db/db'
 import { readAll } from '../db/repo'
 import { downloadFile, exportJson, exportText, localDateStamp } from '../export/export'
 import { loadSeed } from '../import/seed'
-import { subscribeStatus, type SyncStatus } from '../sync/engine'
+import { getAccount, preloadGsi, signIn, signOut, type GoogleAccount } from '../sync/auth'
+import { ensureSyncStarted } from '../sync/boot'
+import {
+  createFolder,
+  findFolders,
+  getFolder,
+  setFolder,
+  type DriveFolder,
+} from '../sync/drive'
+import { subscribeStatus, syncNow, type SyncStatus } from '../sync/engine'
 import { SYNC_LABELS } from './syncLabels'
 
 interface SyncInfo {
@@ -74,8 +83,18 @@ function NameSection() {
   )
 }
 
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 function SyncSection() {
   const [info, setInfo] = useState<SyncInfo>({ status: 'pending', skipped: [] })
+  const [account, setAccount] = useState<GoogleAccount | undefined>()
+  const [folder, setFolderInfo] = useState<DriveFolder | undefined>()
+  const [matches, setMatches] = useState<DriveFolder[] | undefined>() // undefined = chooser closed
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
   useEffect(
     () =>
       subscribeStatus((status, lastSynced, skipped) =>
@@ -83,6 +102,98 @@ function SyncSection() {
       ),
     [],
   )
+
+  useEffect(() => {
+    preloadGsi() // so the Sign in tap can open Google's popup straight away
+    let live = true
+    void Promise.all([getAccount(), getFolder()]).then(([a, f]) => {
+      if (!live) return
+      setAccount(a)
+      setFolderInfo(f)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  // Lists the Garage Log folders this account can see. It never picks one by itself.
+  async function loadMatches() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      setMatches(await findFolders())
+    } catch (e) {
+      setMatches(undefined)
+      setError(`Could not look for the folder: ${errorMessage(e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Called straight from the click so the Google popup is allowed.
+  async function onSignIn() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const a = await signIn()
+      setAccount(a)
+      setFolderInfo(await getFolder())
+    } catch (e) {
+      setError(`Sign-in failed: ${errorMessage(e)}`)
+      setBusy(false)
+      return
+    }
+    setBusy(false)
+    if (!(await getFolder())) await loadMatches()
+  }
+
+  async function onSignOut() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await signOut()
+    } finally {
+      setAccount(undefined)
+      setFolderInfo(undefined)
+      setMatches(undefined)
+      setBusy(false)
+    }
+  }
+
+  async function choose(f: DriveFolder) {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await setFolder(f.id, f)
+      setFolderInfo(f)
+      setMatches(undefined)
+      // Starts sync the first time; if it was already running, just sync the new folder.
+      if (!(await ensureSyncStarted())) await syncNow()
+    } catch (e) {
+      setError(`Could not use that folder: ${errorMessage(e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function create() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const f = await createFolder()
+      await choose(f)
+    } catch (e) {
+      setError(errorMessage(e))
+      // Most likely a folder turned up since we looked: show what is there instead.
+      await loadMatches()
+    }
+  }
+
+  async function onSyncNow() {
+    setError(undefined)
+    await ensureSyncStarted()
+    await syncNow()
+  }
 
   return (
     <div className="panel stack-form">
@@ -101,6 +212,92 @@ function SyncSection() {
           {info.skipped.join(', ')}
         </p>
       )}
+
+      <p className="settings-line">
+        {account ? (
+          <>
+            Signed in as {account.name} ({account.email})
+          </>
+        ) : (
+          <span className="muted">Not signed in</span>
+        )}
+      </p>
+      {account && (
+        <p className="muted settings-line">
+          {folder ? (
+            <>
+              Folder: {folder.name}
+              {folder.ownerEmail && ` (owner ${folder.ownerEmail})`}
+              {folder.shared && ' · shared'}
+            </>
+          ) : (
+            'No folder chosen yet'
+          )}
+        </p>
+      )}
+
+      {matches && matches.length > 0 && (
+        <div className="stack-form">
+          <p className="settings-note">Tap the Garage Log folder to use:</p>
+          <ul className="plain-list">
+            {matches.map((f) => (
+              <li key={f.id}>
+                <button
+                  type="button"
+                  className="btn btn-block"
+                  disabled={busy}
+                  onClick={() => void choose(f)}
+                >
+                  {f.name} — {f.ownerEmail || 'unknown owner'}
+                  {f.shared && ' · shared'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {matches && matches.length === 0 && (
+        <div className="stack-form">
+          <p className="settings-note">
+            No Garage Log folder found in this Google account. If someone is sharing one with you,
+            ask them to share it with {account?.email}, then try again.
+          </p>
+          <button type="button" className="btn" disabled={busy} onClick={() => void create()}>
+            Create Garage Log folder
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="field-warn">
+          {error}
+        </p>
+      )}
+
+      <div className="settings-actions">
+        {account ? (
+          <>
+            <button type="button" className="btn" disabled={busy} onClick={() => void loadMatches()}>
+              Choose folder
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => void onSyncNow()}>
+              Sync now
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => void onSignOut()}>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => void onSignIn()}
+          >
+            Sign in
+          </button>
+        )}
+      </div>
     </div>
   )
 }
