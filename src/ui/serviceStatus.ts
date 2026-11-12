@@ -30,6 +30,6 @@ export function serviceStatusParts({ item, vehicle, entries, today }: StatusProp
     parts.push(r >= 0 ? `${num(r)} ${unit} left` : `${num(-r)} ${unit} over`)
   }
   if (info.dueDate) parts.push(`due ${formatEntryDate(todayEntryDate(info.dueDate))}`)
-  return { pill, parts }
+  return { pill, parts, state: info.state }
 }
 

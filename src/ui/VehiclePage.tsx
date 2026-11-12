@@ -137,7 +137,7 @@ export default function VehiclePage({ today }: { today?: Date }) {
         </details>
 
         {items.map((item) => {
-          const { pill, parts } = serviceStatusParts({ item, vehicle, entries, today: now })
+          const { pill, parts, state } = serviceStatusParts({ item, vehicle, entries, today: now })
           return (
             <details key={item.id} className="sum">
               <summary>
@@ -153,7 +153,9 @@ export default function VehiclePage({ today }: { today?: Date }) {
                     </span>
                   ))
                 ) : (
-                  <span className="muted">No service logged yet</span>
+                  <span className="muted">
+                    {state === 'never-done' ? 'No service logged yet' : 'No due estimate'}
+                  </span>
                 )}
               </div>
             </details>

@@ -184,6 +184,19 @@ describe('VehiclePage log', () => {
     expect(within(row).queryByRole('link')).not.toBeInTheDocument()
   })
 
+  test("row's accessible name keeps date, reading, tags and text apart", async () => {
+    await putRaw({
+      vehicles: [vehicle()],
+      entries: [entry('e1', { readings: { odo: 1200 }, tags: ['repair', 'mod'], text: 'Fixed it' })],
+    })
+    renderPage()
+    await screen.findByText('Oct 1, 2026')
+    // No aria-label: the name comes from the content, so it must carry real spaces.
+    const link = screen.getByRole('link', { name: /Oct 1, 2026\s+1,200 km\s+repair mod/ })
+    expect(link).toHaveAttribute('href', '/entry/e1/edit')
+    expect(screen.getByRole('link', { name: /by Jamie\s+Fixed it/ })).toBe(link)
+  })
+
   test('rows have no Edit or Delete buttons', async () => {
     await putRaw({ vehicles: [vehicle()], entries: [entry('e1'), entry('e2')] })
     renderPage()
@@ -396,6 +409,24 @@ describe('VehiclePage header', () => {
     expect(await screen.findByText('8,200 km over')).toBeVisible()
     await user.click(screen.getByText('Inspection: OK'))
     expect(await screen.findByText('due Jul 1, 2027')).toBeVisible()
+  })
+
+  test('an OK item with no computable remainder says No due estimate, not No service logged', async () => {
+    await putRaw({
+      vehicles: [vehicle()],
+      serviceItems: [
+        item('s-ok', 'Oil change', { intervalMeterId: 'odo', intervalAmount: 5000 }),
+        item('s-never', 'Air filter', { intervalMonths: 12 }),
+      ],
+      // Completed, but the entry recorded no odometer reading, so there is no remaining amount.
+      entries: [entry('d-ok', { serviceItemIds: ['s-ok'] })],
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await expand(user, 'Oil change: OK')
+    expect(await screen.findByText('No due estimate')).toBeVisible()
+    await user.click(screen.getByText('Air filter: Never done'))
+    expect(await screen.findByText('No service logged yet')).toBeVisible()
   })
 
   test('no service items: no service pills', async () => {

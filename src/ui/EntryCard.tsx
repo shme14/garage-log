@@ -45,10 +45,11 @@ export default function EntryCard({ entry, vehicle, showIssue }: Props) {
   if (entry.tags.length > 0) {
     parts.push(
       <span key="tags" className="entry-tags">
-        {entry.tags.map((t) => (
-          <span key={t} className="entry-tag">
-            {t}
-          </span>
+        {entry.tags.map((t, i) => (
+          <Fragment key={t}>
+            {i > 0 && ' '}
+            <span className="entry-tag">{t}</span>
+          </Fragment>
         ))}
       </span>,
     )
@@ -76,12 +77,18 @@ export default function EntryCard({ entry, vehicle, showIssue }: Props) {
       <span className="entry-meta">
         {parts.map((part, i) => (
           <Fragment key={i}>
-            {/* NBSP before the dot keeps it on the previous line when the row wraps. */}
-            {i > 0 && <span aria-hidden="true">{'\u00a0\u00b7 '}</span>}
+            {/* NBSP before the dot keeps it on the previous line when the row wraps; the real
+                spaces stay outside the hidden dot so the link's accessible name is spaced. */}
+            {i > 0 && (
+              <>
+                {'\u00a0'}
+                <span aria-hidden="true">{'\u00b7'}</span>{' '}
+              </>
+            )}
             {part}
           </Fragment>
         ))}
-      </span>
+      </span>{' '}
       <span className="entry-text">{entry.text}</span>
     </Link>
   )

@@ -506,20 +506,21 @@ a.btn {
 }
 
 .sum-pill::after {
-  content: '▾';
+  content: '▾' / '';
   margin-left: 4px;
   font-size: 0.7rem;
   opacity: 0.7;
 }
 
 .sum[open] .sum-pill::after {
-  content: '▴';
+  content: '▴' / '';
 }
 
 /* State colours come from the shared .pill-* classes (same as the Service tab). */
 .sum-pill.pill {
   border-color: transparent;
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .sum-warn {
@@ -723,7 +724,7 @@ a.btn {
   flex: 1;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 8px;
   border-bottom: 3px solid transparent;
   color: var(--muted);
@@ -763,8 +764,18 @@ a.btn {
   border-bottom: 0;
 }
 
+.entry-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.entry-row:active {
+  background: var(--bg);
+}
+
 .entry-meta {
   display: block;
+  overflow-wrap: anywhere;
   font-size: 0.8rem;
   line-height: 1.3;
   color: var(--muted);
@@ -773,10 +784,6 @@ a.btn {
 .entry-date {
   font-weight: 700;
   color: var(--text);
-}
-
-.entry-tag + .entry-tag {
-  margin-left: 0.4em;
 }
 
 .entry-issue {

@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { db, getEditContext } from '../db/db'
 import {
@@ -112,6 +112,7 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
   const navigate = useNavigate()
   const undoDelete = useUndoDelete()
   const editing = entry !== undefined
+  const deleting = useRef(false)
 
   const [vehicleId, setVehicleId] = useState(initialVehicleId)
   const [date, setDate] = useState<EntryDate>(() => entry?.date ?? todayEntryDate(now))
@@ -197,9 +198,11 @@ function EntryFormBody({ vehicles, entry, initialVehicleId, initialIssueId, now 
 
   // Soft delete with the app-wide Undo toast (it outlives this screen), then leave like Cancel.
   function onDelete() {
-    if (!entry) return
-    undoDelete('entries', entry.id, 'Entry')
+    if (!entry || deleting.current) return // a second tap must not delete again
+    deleting.current = true
+    // Leave first so the form never flashes "Entry not found" once the soft delete lands.
     leave()
+    undoDelete('entries', entry.id, 'Entry')
   }
 
   async function onSubmit(ev: FormEvent) {
