@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Garage Log - Drive spike</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Drive spike">
+<meta name="theme-color" content="#1a73e8">
+<style>
+  * { box-sizing: border-box; }
+  body { font: 16px/1.4 system-ui, -apple-system, sans-serif; margin: 0 auto; padding: 12px; max-width: 760px; color: #202124; background: #fff; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 17px; margin: 16px 0 6px; }
+  details { background: #f1f3f4; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+  summary { font-weight: 600; min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+  details ol, details ul { padding-left: 22px; margin: 6px 0; }
+  details li { margin-bottom: 6px; }
+  .state { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; background: #e8f0fe; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; }
+  .state dt { font-weight: 600; }
+  .state dd { margin: 0; word-break: break-all; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  label { display: block; font-weight: 600; margin: 10px 0 4px; }
+  input, select { font-size: 16px; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #9aa0a6; border-radius: 8px; background: #fff; color: inherit; }
+  button { font-size: 16px; min-height: 48px; padding: 10px 14px; margin: 4px 4px 4px 0; border: 0; border-radius: 8px; background: #1a73e8; color: #fff; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #5f6368; }
+  button:active { opacity: .7; }
+  .row { display: flex; flex-wrap: wrap; }
+  .row button { flex: 1 1 100%; text-align: left; }
+  @media (min-width: 560px) { .row button { flex: 0 1 auto; } }
+  #log { font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; background: #202124; color: #e8eaed; padding: 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 160px; max-height: 60vh; overflow-y: auto; margin: 6px 0; -webkit-user-select: text; user-select: text; }
+</style>
+</head>
+<body>
+<h1>Garage Log - Drive spike</h1>
+
+<details open>
+  <summary>How to run this test (tap to hide)</summary>
+  <p>Goal: find out if the app can read and write one shared Google Drive folder from the partner's iPhone. Run <b>Mode A</b> first. Only if Mode A fails, run <b>Mode B</b>.</p>
+  <ul>
+    <li><b>Mode A</b> = scope <code>drive.file</code> + the folder Picker.</li>
+    <li><b>Mode B</b> = scope <code>drive</code>, finds the folder by name (no Picker).</li>
+  </ul>
+  <p>After each part, tap "Copy log" and paste the log back to Claude.</p>
+  <h2>Owner (Android), Mode A</h2>
+  <ol>
+    <li>Paste the API key into the "API key" box (it is remembered on this device).</li>
+    <li>Mode = <code>drive.file</code>. Tap <b>1. Sign in</b> and approve.</li>
+    <li>Tap <b>2. Create folder "Garage Log"</b>.</li>
+    <li>Tap <b>5. Write my file</b>.</li>
+    <li>In the normal Google Drive app or website: share the "Garage Log" folder with the partner as <b>Editor</b>. Tell the partner it is ready.</li>
+  </ol>
+  <h2>Partner (iPhone)</h2>
+  <ol>
+    <li>In <b>Safari</b>, open this page. Enter the API key. Mode = <code>drive.file</code>.</li>
+    <li>Tap <b>1. Sign in</b> (use the partner's own Google account) and approve.</li>
+    <li>Tap <b>4. Pick folder (Picker)</b>, open the "Shared with me" tab, select "Garage Log", and confirm.</li>
+    <li>Tap <b>6. List &amp; read all</b>. The owner's file should show and be readable.</li>
+    <li>Tap <b>5. Write my file</b>, then <b>6. List &amp; read all</b> again. Copy the log.</li>
+    <li>Repeat all of the above from the <b>home-screen icon</b>: in Safari tap Share, then "Add to Home Screen", close Safari, open the new icon. The page should say "installed app: yes". Note whether it asks you to sign in again.</li>
+  </ol>
+  <h2>Owner again</h2>
+  <ol>
+    <li>Tap <b>6. List &amp; read all</b>. The partner's file should appear and be readable. Copy the log.</li>
+  </ol>
+  <h2>Mode B (only if Mode A failed)</h2>
+  <ol>
+    <li>Change Mode to <code>drive</code> (this signs you out). Sign in again on each device.</li>
+    <li>Use <b>3. Find folder (drive mode)</b> instead of the Picker, then <b>6. List &amp; read all</b> and <b>5. Write my file</b>. Same order: owner, partner (Safari, then home-screen icon), owner.</li>
+  </ol>
+</details>
+
+<dl class="state" id="state"></dl>
+
+<label for="mode">Scope mode</label>
+<select id="mode">
+  <option value="drive.file">drive.file (Mode A, with Picker)</option>
+  <option value="drive">drive (Mode B, find by name)</option>
+</select>
+
+<label for="apikey">API key (for the Picker; kept on this device only)</label>
+<input id="apikey" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="paste Picker API key">
+
+<h2>Steps</h2>
+<div class="row">
+  <button id="b-signin">1. Sign in</button>
+  <button id="b-create">2. Create folder "Garage Log" (owner)</button>
+  <button id="b-find">3. Find folder (drive mode)</button>
+  <button id="b-pick">4. Pick folder (Picker)</button>
+  <button id="b-write">5. Write my file</button>
+  <button id="b-list">6. List &amp; read all</button>
+</div>
+
+<h2>Log</h2>
+<div class="row">
+  <button id="b-copy" class="secondary">Copy log</button>
+  <button id="b-clear" class="secondary">Clear log</button>
+</div>
+<pre id="log" aria-live="polite"></pre>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<script>
+'use strict';
+const CLIENT_ID = '301979172435-v2ken67m9sjfp3h91q3r30to7eqsb9rh.apps.googleusercontent.com';
+const PROJECT_NUMBER = '301979172435';
+const FOLDER_MIME = 'application/vnd.google-apps.folder';
+const SCOPES = {
+  'drive.file': 'https://www.googleapis.com/auth/drive.file',
+  'drive': 'https://www.googleapis.com/auth/drive',
+};
+
+const $ = (id) => document.getElementById(id);
+
+// ---- safe storage ----
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+
+// ---- state ----
+const state = {
+  token: null,
+  tokenExpiresAt: null,
+  grantedScope: null,
+  email: null,
+  folderId: null,
+  folderName: null,
+  mode: lsGet('spike.mode') === 'drive' ? 'drive' : 'drive.file',
+  deviceId: null,
+};
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+state.deviceId = lsGet('spike.deviceId');
+if (!state.deviceId) { state.deviceId = uuid(); lsSet('spike.deviceId', state.deviceId); }
+
+function isInstalled() {
+  try { return !!(window.matchMedia('(display-mode: standalone)').matches || navigator.standalone); } catch (e) { return false; }
+}
+
+// ---- log ----
+const logEl = $('log');
+function log(msg) {
+  const ts = new Date().toISOString().slice(11, 23);
+  logEl.textContent += `[${ts}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function pretty(x) {
+  if (typeof x === 'string') return x;
+  try { return JSON.stringify(x, null, 2); } catch (e) { return String(x); }
+}
+function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + `... [${s.length - n} more chars]` : s; }
+
+// ---- state panel ----
+function renderState() {
+  const exp = state.tokenExpiresAt ? new Date(state.tokenExpiresAt).toLocaleTimeString() : '-';
+  const rows = [
+    ['signed in', state.email || (state.token ? '(token, email unknown)' : 'no')],
+    ['scope mode', state.mode],
+    ['granted scopes', state.grantedScope || '-'],
+    ['token expires', state.token ? exp : '-'],
+    ['folder id', state.folderId ? `${state.folderId}${state.folderName ? ' (' + state.folderName + ')' : ''}` : '-'],
+    ['device id', state.deviceId],
+    ['installed app', isInstalled() ? 'yes' : 'no (browser tab)'],
+  ];
+  const dl = $('state');
+  dl.textContent = '';
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    dl.append(dt, dd);
+  }
+}
+
+function clearToken(reason) {
+  if (state.token) log(`Token cleared (${reason}).`);
+  state.token = null; state.tokenExpiresAt = null; state.grantedScope = null; state.email = null;
+  renderState();
+}
+
+// ---- HTTP helper: logs request and response (never the token) ----
+async function api(label, url, opts) {
+  opts = opts || {};
+  const method = opts.method || 'GET';
+  if (!state.token) { log(`${label}: not signed in. Tap "1. Sign in" first.`); return null; }
+  const headers = Object.assign({ Authorization: 'Bearer ' + state.token }, opts.headers || {});
+  log(`>> ${label}: ${method} ${url}`);
+  if (typeof opts.body === 'string') log(`   body: ${clip(opts.body, 1500)}`);
+  let res, text;
+  try {
+    res = await fetch(url, { method, headers, body: opts.body });
+    text = await res.text();
+  } catch (e) {
+    log(`<< ${label}: NETWORK ERROR ${e && e.message ? e.message : e}`);
+    return null;
+  }
+  let parsed = text;
+  try { parsed = JSON.parse(text); } catch (e) { /* keep text */ }
+  log(`<< ${label}: HTTP ${res.status} ${res.statusText}\n${clip(pretty(parsed), 3000)}`);
+  if (res.status === 401) log('   (401: token expired or revoked. Sign in again.)');
+  return { ok: res.ok, status: res.status, body: parsed, text };
+}
+
+const DRIVE = 'https://www.googleapis.com/drive/v3/files';
+const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+
+// ---- 1. Sign in ----
+function signIn() {
+  if (!(window.google && google.accounts && google.accounts.oauth2)) {
+    log('Google Identity Services script not loaded yet (offline or blocked?). Try again in a moment.');
+    return;
+  }
+  const scope = `${SCOPES[state.mode]} openid email profile`;
+  log(`Sign in: requesting scope "${scope}"`);
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope,
+    callback: async (resp) => {
+      try {
+        if (resp.error) {
+          log(`Sign in FAILED: ${pretty({ error: resp.error, error_description: resp.error_description, error_uri: resp.error_uri })}`);
+          return;
+        }
+        state.token = resp.access_token;
+        state.tokenExpiresAt = Date.now() + Number(resp.expires_in || 0) * 1000;
+        state.grantedScope = resp.scope || null;
+        log(`Token received. expires_in=${resp.expires_in}s token_type=${resp.token_type}\n   granted scope: ${resp.scope}`);
+        renderState();
+        const r = await api('userinfo', 'https://www.googleapis.com/oauth2/v3/userinfo');
+        if (r && r.ok && r.body && typeof r.body === 'object') {
+          state.email = r.body.email || null;
+          log(`Signed in as: ${r.body.name || '?'} <${r.body.email || '?'}>`);
+          renderState();
+        }
+      } catch (e) {
+        log(`Sign in callback ERROR: ${e && e.stack ? e.stack : e}`);
+      }
+    },
+    error_callback: (err) => {
+      log(`Sign in ERROR callback: ${pretty(err)}`);
+    },
+  });
+  client.requestAccessToken();
+}
+
+// ---- 2. Create folder ----
+async function createFolder() {
+  const meta = { name: 'Garage Log', mimeType: FOLDER_MIME };
+  const r = await api('create folder', `${DRIVE}?supportsAllDrives=true&fields=id,name,mimeType,owners(emailAddress)`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(meta),
+  });
+  if (r && r.ok && r.body && r.body.id) {
+    state.folderId = r.body.id; state.folderName = r.body.name;
+    log(`Folder remembered: ${state.folderId}`);
+    renderState();
+  }
+}
+
+// ---- 3. Find folder (drive mode) ----
+async function findFolder() {
+  if (state.mode !== 'drive') log('Note: with drive.file scope this search will normally only see folders this app created or was given via the Picker.');
+  const q = `name='Garage Log' and mimeType='${FOLDER_MIME}' and trashed=false`;
+  const url = `${DRIVE}?q=${encodeURIComponent(q)}&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=${encodeURIComponent('files(id,name,owners(emailAddress),shared)')}`;
+  log(`query q = ${q}`);
+  const r = await api('find folder', url);
+  if (r && r.ok && r.body && Array.isArray(r.body.files)) {
+    log(`Matches: ${r.body.files.length}`);
+    if (r.body.files.length) {
+      state.folderId = r.body.files[0].id; state.folderName = r.body.files[0].name;
+      log(`Using first match: ${state.folderId}`);
+      renderState();
+    }
+  }
+}
+
+// ---- 4. Picker ----
+let pickerLoaded = false;
+function loadPicker() {
+  return new Promise((resolve, reject) => {
+    if (pickerLoaded) return resolve();
+    if (!(window.gapi && gapi.load)) return reject(new Error('Google API script (api.js) not loaded yet'));
+    gapi.load('picker', {
+      callback: () => { pickerLoaded = true; resolve(); },
+      onerror: () => reject(new Error('gapi.load("picker") failed')),
+      timeout: 10000,
+      ontimeout: () => reject(new Error('gapi.load("picker") timed out')),
+    });
+  });
+}
+
+async function pickFolder() {
+  if (!state.token) { log('Pick: not signed in. Tap "1. Sign in" first.'); return; }
+  const apiKey = $('apikey').value.trim();
+  if (!apiKey) { log('Pick: enter the API key first.'); return; }
+  try { await loadPicker(); } catch (e) { log(`Pick: ${e.message}`); return; }
+  try {
+    const mine = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setMimeTypes(FOLDER_MIME);
+    const shared = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setMimeTypes(FOLDER_MIME)
+      .setOwnedByMe(false);
+    if (mine.setLabel) { mine.setLabel('My folders'); shared.setLabel('Shared with me'); }
+    log('Opening Picker (views: folders, folders not owned by me).');
+    const picker = new google.picker.PickerBuilder()
+      .addView(mine)
+      .addView(shared)
+      .setOAuthToken(state.token)
+      .setDeveloperKey(apiKey)
+      .setAppId(PROJECT_NUMBER)
+      .setCallback((data) => {
+        const action = data[google.picker.Response.ACTION];
+        log(`Picker callback: action=${action}`);
+        if (action === google.picker.Action.PICKED) {
+          const doc = (data[google.picker.Response.DOCUMENTS] || [])[0];
+          if (doc) {
+            state.folderId = doc[google.picker.Document.ID];
+            state.folderName = doc[google.picker.Document.NAME];
+            log(`Picked folder: ${state.folderName} (${state.folderId})\n${clip(pretty(doc), 1500)}`);
+            renderState();
+          }
+        }
+      })
+      .build();
+    picker.setVisible(true);
+  } catch (e) {
+    log(`Pick ERROR: ${e && e.stack ? e.stack : e}`);
+  }
+}
+
+// ---- 5. Write my file ----
+async function writeMyFile() {
+  if (!state.folderId) { log('Write: no folder id yet. Create, find or pick a folder first.'); return; }
+  const name = `changes-${state.deviceId}.json`;
+  const content = JSON.stringify({
+    version: 1,
+    deviceId: state.deviceId,
+    writtenAt: new Date().toISOString(),
+    ua: navigator.userAgent,
+  });
+  // does my file already exist in the folder?
+  const q = `'${state.folderId}' in parents and name='${name}' and trashed=false`;
+  const lookup = await api('lookup my file', `${DRIVE}?q=${encodeURIComponent(q)}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=${encodeURIComponent('files(id,name)')}`);
+  if (!lookup || !lookup.ok) { log('Write: lookup failed, not writing.'); return; }
+  const existing = lookup.body && lookup.body.files && lookup.body.files[0];
+  if (existing) {
+    log(`File exists (${existing.id}); updating.`);
+    await api('update my file', `${UPLOAD}/${existing.id}?uploadType=media&supportsAllDrives=true&fields=id,name,modifiedTime`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: content,
+    });
+  } else {
+    log('File not found; creating.');
+    const boundary = 'gl' + uuid().replace(/-/g, '');
+    const meta = JSON.stringify({ name, parents: [state.folderId], mimeType: 'application/json' });
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n` +
+      `--${boundary}--`;
+    await api('create my file', `${UPLOAD}?uploadType=multipart&supportsAllDrives=true&fields=id,name,parents,modifiedTime`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body,
+    });
+  }
+}
+
+// ---- 6. List & read all ----
+async function listAndRead() {
+  if (!state.folderId) { log('List: no folder id yet. Create, find or pick a folder first.'); return; }
+  const q = `'${state.folderId}' in parents and trashed=false`;
+  const url = `${DRIVE}?q=${encodeURIComponent(q)}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=${encodeURIComponent('files(id,name,owners(emailAddress),modifiedTime)')}`;
+  const r = await api('list folder', url);
+  if (!r || !r.ok || !r.body || !Array.isArray(r.body.files)) return;
+  log(`Files in folder: ${r.body.files.length}`);
+  for (const f of r.body.files) {
+    await api(`read ${f.name}`, `${DRIVE}/${f.id}?alt=media&supportsAllDrives=true`);
+  }
+  log('List & read done.');
+}
+
+// ---- log buttons ----
+async function copyLog() {
+  const text = logEl.textContent;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      log('Log copied to clipboard.');
+      return;
+    }
+  } catch (e) { /* fall through */ }
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(logEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+    const ok = document.execCommand && document.execCommand('copy');
+    log(ok ? 'Log copied (fallback).' : 'Log selected: press and hold, then tap Copy.');
+  } catch (e) {
+    log('Could not copy automatically: press and hold the log text, Select All, Copy.');
+  }
+}
+
+// ---- wire up ----
+function guarded(fn) {
+  return async () => {
+    try { await fn(); } catch (e) { log(`UNEXPECTED ERROR: ${e && e.stack ? e.stack : e}`); }
+  };
+}
+$('b-signin').addEventListener('click', guarded(signIn));
+$('b-create').addEventListener('click', guarded(createFolder));
+$('b-find').addEventListener('click', guarded(findFolder));
+$('b-pick').addEventListener('click', guarded(pickFolder));
+$('b-write').addEventListener('click', guarded(writeMyFile));
+$('b-list').addEventListener('click', guarded(listAndRead));
+$('b-copy').addEventListener('click', copyLog);
+$('b-clear').addEventListener('click', () => { logEl.textContent = ''; });
+
+$('mode').value = state.mode;
+$('mode').addEventListener('change', () => {
+  state.mode = $('mode').value;
+  lsSet('spike.mode', state.mode);
+  clearToken('scope mode changed');
+  state.folderId = null; state.folderName = null;
+  log(`Scope mode set to ${state.mode}. Sign in again.`);
+  renderState();
+});
+
+$('apikey').value = lsGet('spike.apikey') || '';
+$('apikey').addEventListener('input', () => lsSet('spike.apikey', $('apikey').value.trim()));
+
+window.addEventListener('error', (e) => log(`window error: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => log(`unhandled rejection: ${e.reason && e.reason.stack ? e.reason.stack : e.reason}`));
+
+renderState();
+log(`Page ready. UA: ${navigator.userAgent}`);
+log(`Installed app: ${isInstalled() ? 'yes' : 'no'}; origin: ${location.origin}`);
+</script>
+</body>
+</html>
