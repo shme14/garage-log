@@ -61,7 +61,7 @@ src/search/search.ts           search over RecordSet
 src/export/export.ts           JSON + text export
 src/import/seed.ts             validateSeed + loadSeed
 src/ui/...                     screens (Tasks 8–12)
-import/seed.json, import/review.md   converted Keep data (Task 13)
+private/seed.json, private/review.md   converted Keep data (Task 13)
 spike/drive/index.html         throwaway (Task 1)
 ```
 
@@ -465,7 +465,7 @@ test('exportText includes vehicle heading and month dates', () => expect(exportT
 ### Task 13: Keep import (conversion + loader)
 
 **Files:**
-- Create: `import/seed.json`, `import/review.md` (produced by Claude from `docs/import/keep-notes.md`)
+- Create: `private/seed.json`, `private/review.md` (produced by Claude from `private/keep-notes.md`)
 - Create: `src/import/seed.ts`
 - Modify: `src/ui/SettingsPage.tsx` (button "Load Keep import" — file picker for `seed.json`, shown only when the local DB has no vehicles)
 - Test: `src/import/seed.test.ts`
@@ -490,11 +490,11 @@ test('validateSeed rejects entry with unknown vehicle', ...)
 ```
 
 - [ ] **Step 2: Run** `npx vitest run src/import` — Expected: FAIL.
-- [ ] **Step 3: Convert** the Keep notes into `import/seed.json` and write `import/review.md`.
+- [ ] **Step 3: Convert** the Keep notes into `private/seed.json` and write `private/review.md`.
 - [ ] **Step 4: Implement** `seed.ts` and the Settings button.
 - [ ] **Step 5: Run** `npx vitest run src/import` — Expected: PASS.
-- [ ] **Step 6: Owner review** — owner reads `import/review.md` and approves or requests corrections; apply corrections and re-run Step 5.
-- [ ] **Step 7: Commit** `git add import src && git commit -m "feat: Keep import seed and loader"`
+- [ ] **Step 6: Owner review** — owner reads `private/review.md` and approves or requests corrections; apply corrections and re-run Step 5.
+- [ ] **Step 7: Commit** `git add src && git commit -m "feat: Keep import seed and loader"`
 
 ---
 

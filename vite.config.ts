@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // private/ is git-ignored (owner's real data); its tests run only where the folder exists.
+    include: ['src/**/*.test.{ts,tsx}', 'private/**/*.test.ts'],
   },
 })

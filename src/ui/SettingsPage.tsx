@@ -1,9 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { db, getUser, setUser } from '../db/db'
+import { db, getEditContext, getUser, setUser } from '../db/db'
 import { readAll } from '../db/repo'
 import { downloadFile, exportJson, exportText, localDateStamp } from '../export/export'
+import { loadSeed } from '../import/seed'
 import { subscribeStatus, type SyncStatus } from '../sync/engine'
 import { SYNC_LABELS } from './syncLabels'
 
@@ -20,6 +21,7 @@ export default function SettingsPage() {
       <NameSection />
       <SyncSection />
       <VehiclesSection />
+      <ImportSection />
       <ExportSection />
     </section>
   )
@@ -128,6 +130,72 @@ function VehiclesSection() {
       <Link to="/vehicles/new" className="btn btn-primary">
         Add vehicle
       </Link>
+    </div>
+  )
+}
+
+type ImportResult = { ok: true; count: number } | { ok: false; message: string }
+
+/** One-time load of the converted Keep notes file (seed.json); offered only to an empty garage. */
+function ImportSection() {
+  const empty = useLiveQuery(async () =>
+    (await db.vehicles.toArray()).every((v) => v.deleted),
+  )
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<ImportResult>()
+
+  async function onFile(ev: ChangeEvent<HTMLInputElement>) {
+    const input = ev.currentTarget
+    const file = input.files?.[0]
+    if (!file) return
+    setBusy(true)
+    setResult(undefined)
+    try {
+      let json: unknown
+      try {
+        json = JSON.parse(await file.text())
+      } catch {
+        throw new Error(`${file.name} is not valid JSON`)
+      }
+      const count = await loadSeed(json, await getEditContext())
+      setResult({ ok: true, count })
+    } catch (err) {
+      setResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      input.value = ''
+      setBusy(false)
+    }
+  }
+
+  // Keep the section up after a successful import so its message stays visible.
+  if (!empty && !result) return null
+
+  return (
+    <div className="panel stack-form">
+      <h3>Load Keep import</h3>
+      {empty && (
+        <>
+          <p className="muted settings-note">
+            Loads the converted Keep notes (seed.json) into this garage. Only offered while there are
+            no vehicles.
+          </p>
+          <label className="field">
+            <span className="field-label">Keep import file (seed.json)</span>
+            <input
+              type="file"
+              accept=".json,application/json"
+              disabled={busy}
+              onChange={(ev) => void onFile(ev)}
+            />
+          </label>
+        </>
+      )}
+      {result?.ok && <p role="status">Imported {result.count} records</p>}
+      {result && !result.ok && (
+        <p role="alert" className="field-warn">
+          Import failed: {result.message}
+        </p>
+      )}
     </div>
   )
 }

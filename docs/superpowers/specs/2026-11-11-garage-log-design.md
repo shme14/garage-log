@@ -221,8 +221,8 @@ The first implementation task is a throwaway spike verifying read/write of the s
 
 ## 6. Keep import
 
-- One-time conversion performed by Claude from the four Keep notes (2021 F150, 2015 F150, Relay, Sparky), source text saved in `docs/import/keep-notes.md`.
-- Output: `import/seed.json` containing vehicles (with info pages and meters), entries, issues, todos, and service items.
+- One-time conversion performed by Claude from the four Keep notes (2021 F150, 2015 F150, Relay, Sparky), source text saved in `private/keep-notes.md`.
+- Output: `private/seed.json` containing vehicles (with info pages and meters), entries, issues, todos, and service items.
 - Conversion rules:
   - Each dated paragraph becomes an entry; month-only dates use month precision; km/hour values in the text become meter readings.
   - Undated sections (purchase details, FORScan/BCM/APIM config, weights, base suspension settings, links) go into the vehicle's info page.
@@ -231,8 +231,9 @@ The first implementation task is a throwaway spike verifying read/write of the s
   - Oil change service items are created for both trucks with editable default intervals of 8,000 km / 12 months, linked to past oil-change entries.
   - Where a km value could belong to more than one meter (e.g. Relay bike km vs motor km after the Aug 2024 motor swap), the importer picks the most likely meter and lists it in the review report.
   - Ambiguities (e.g. Sparky "July 22, 2025: new front brakes" listed after a 2026 entry) are kept as written and listed in a review report.
-- A readable review report (`import/review.md`) is produced for the owner to check before the seed is loaded.
+- A readable review report (`private/review.md`) is produced for the owner to check before the seed is loaded.
 - The app loads `seed.json` once via a Settings action on the owner's device; it then syncs like any other data.
+- These files contain personal notes and are git-ignored; they are never committed.
 
 ## 7. Error handling
 

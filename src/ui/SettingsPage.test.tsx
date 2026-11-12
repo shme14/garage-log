@@ -19,6 +19,37 @@ vi.mock('../sync/engine', () => ({
   },
 }))
 
+/** A tiny synthetic seed file: 1 vehicle, 1 issue, 1 service item, 1 todo, 2 entries (6 records). */
+const seedJson = {
+  vehicles: [
+    { id: 'v-seed', name: 'Test Truck', kind: 'truck', info: '', archived: false, meters: [] },
+  ],
+  issues: [{ id: 'i-seed', vehicleId: 'v-seed', title: 'Test issue', status: 'open' }],
+  serviceItems: [{ id: 's-seed', vehicleId: 'v-seed', name: 'Test service', intervalMonths: 12 }],
+  todos: [{ id: 't-seed', vehicleId: 'v-seed', text: 'Test todo', done: false }],
+  entries: [
+    {
+      id: 'e-seed-1',
+      vehicleId: 'v-seed',
+      date: { precision: 'day', value: '2024-01-10' },
+      readings: {},
+      text: 'First seeded entry',
+      tags: [],
+      issueId: 'i-seed',
+      serviceItemIds: ['s-seed'],
+    },
+    {
+      id: 'e-seed-2',
+      vehicleId: 'v-seed',
+      date: { precision: 'month', value: '2024-06' },
+      readings: {},
+      text: 'Second seeded entry',
+      tags: [],
+      serviceItemIds: [],
+    },
+  ],
+}
+
 const base = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
@@ -93,13 +124,13 @@ describe('SettingsPage', () => {
   test('lists live vehicles with edit links, marks archived ones, and links to add one', async () => {
     await putRaw({
       vehicles: [
-        vehicle('v1', 'Relay'),
+        vehicle('v1', 'Test Truck'),
         vehicle('v2', 'Old Truck', { archived: true }),
         vehicle('v3', 'Deleted', { deleted: true }),
       ],
     })
     renderPage()
-    expect(await screen.findByRole('link', { name: 'Relay' })).toHaveAttribute(
+    expect(await screen.findByRole('link', { name: 'Test Truck' })).toHaveAttribute(
       'href',
       '/vehicles/v1/edit',
     )
@@ -134,7 +165,7 @@ describe('SettingsPage', () => {
 
   test('exports JSON and text as dated downloads and revokes the object URLs', async () => {
     await putRaw({
-      vehicles: [vehicle('v1', 'Relay')],
+      vehicles: [vehicle('v1', 'Test Truck')],
       entries: [entry('e1', { text: 'Torqued bushings' }), entry('e2', { text: 'gone', deleted: true })],
     })
     const blobs: Blob[] = []
@@ -166,7 +197,7 @@ describe('SettingsPage', () => {
     expect(json.version).toBe(1)
     expect(json.records.entries).toHaveLength(2) // tombstones included
     const text = await blobs[1].text()
-    expect(text).toContain('# Relay')
+    expect(text).toContain('# Test Truck')
     expect(text).toContain('Torqued bushings')
     expect(text).not.toContain('gone')
 
@@ -178,5 +209,55 @@ describe('SettingsPage', () => {
     renderPage()
     expect(screen.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument()
+  })
+  test('offers the Keep import only while the garage has no live vehicles', async () => {
+    await putRaw({ vehicles: [vehicle('v3', 'Deleted', { deleted: true })] })
+    const { unmount } = renderPage()
+    expect(await screen.findByLabelText('Keep import file (seed.json)')).toHaveAttribute(
+      'accept',
+      '.json,application/json',
+    )
+    expect(screen.getByRole('heading', { name: 'Load Keep import' })).toBeInTheDocument()
+    unmount()
+
+    await putRaw({ vehicles: [vehicle('v1', 'Test Truck')] })
+    renderPage()
+    await screen.findByRole('link', { name: 'Test Truck' })
+    expect(screen.queryByRole('heading', { name: 'Load Keep import' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Keep import file (seed.json)')).not.toBeInTheDocument()
+  })
+
+  test('loads the chosen seed file and says how many records it imported', async () => {
+    await setUser('Jamie')
+    const user = userEvent.setup()
+    renderPage()
+    const input = await screen.findByLabelText('Keep import file (seed.json)')
+    const s = seedJson as unknown as Record<string, unknown[]>
+    const total = ['vehicles', 'entries', 'issues', 'todos', 'serviceItems'].reduce(
+      (n, k) => n + s[k].length,
+      0,
+    )
+    expect(total).toBe(6)
+    const file = new File([JSON.stringify(seedJson)], 'seed.json', { type: 'application/json' })
+    await user.upload(input, file)
+    expect(await screen.findByText(`Imported ${total} records`)).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Test Truck' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Keep import file (seed.json)')).not.toBeInTheDocument()
+    const stored = await db.entries.toArray()
+    expect(stored.length).toBeGreaterThan(0)
+    expect(stored.every((e) => e.createdBy === 'Jamie')).toBe(true)
+  })
+
+  test('shows why a bad file was refused and imports nothing', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = await screen.findByLabelText('Keep import file (seed.json)')
+    const bad = { ...seedJson, todos: 'nope' }
+    await user.upload(input, new File([JSON.stringify(bad)], 'seed.json', { type: 'application/json' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('todos')
+    expect(await db.vehicles.count()).toBe(0)
+
+    await user.upload(input, new File(['{not json'], 'seed.json', { type: 'application/json' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/not valid JSON/i))
   })
 })

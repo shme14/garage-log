@@ -8,7 +8,7 @@ export interface BaseRecord {
 }
 
 export interface Vehicle extends BaseRecord {
-  name: string // "2021 F150", "Relay", "Sparky"
+  name: string // e.g. "2021 Pickup", "Commuter", "Spare"
   kind: 'truck' | 'car' | 'bike' | 'ebike' | 'other'
   info: string // free-text reference page (purchase details, config codes, weights, links)
   infoUpdatedAt: string // shown as "edited on"
