@@ -18,9 +18,11 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/garage-log/',
         scope: '/garage-log/',
-        // --surface (header) and --bg in src/ui/styles.css, light theme
-        theme_color: '#ffffff',
-        background_color: '#f4f5f7',
+        // --surface (header) and --bg in src/ui/styles.css, dark theme. A manifest holds one colour,
+        // and installed apps (Firefox Android) use it for the system bars; the live theme-color tag
+        // (src/ui/themeColor.ts) switches them to light where the browser honours it.
+        theme_color: '#1a1f25',
+        background_color: '#101317',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
