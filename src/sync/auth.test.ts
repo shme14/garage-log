@@ -8,9 +8,11 @@ import { AuthError } from './store'
 import {
   clearToken,
   completeRedirect,
+  consumeRedirectProblem,
   consumeRedirectSignIn,
   getAccount,
   getToken,
+  isConfirmingSignIn,
   isSignedIn,
   pendingSignIn,
   resetAuthForTests,
@@ -77,6 +79,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('signIn', () => {
@@ -585,5 +588,130 @@ describe('signOut', () => {
     vi.stubGlobal('fetch', f)
     await signOut(vi.fn())
     expect(f).not.toHaveBeenCalled()
+  })
+})
+
+describe('review fixes', () => {
+  const PROBLEM = "Sign-in didn't complete — please try again."
+
+  test('a mismatched, missing or stale state leaves a one-shot problem for Settings', async () => {
+    saveState('s-mine')
+    landWith({ access_token: 't', expires_in: '3599', state: 's-other' })
+    await completeRedirect()
+    expect(consumeRedirectProblem()).toBe(PROBLEM)
+    expect(consumeRedirectProblem()).toBeUndefined()
+
+    landWith({ access_token: 't', expires_in: '3599', state: 's-x' }) // nothing saved
+    await completeRedirect()
+    expect(consumeRedirectProblem()).toBe(PROBLEM)
+
+    saveState('s-1', '#/', Date.now() - 11 * 60_000) // stale
+    landWith({ access_token: 't', expires_in: '3599', state: 's-1' })
+    await completeRedirect()
+    expect(consumeRedirectProblem()).toBe(PROBLEM)
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError) // the chip stays on "Sign in"
+  })
+
+  test('no problem after a successful sign-in or when the user said no', async () => {
+    await signedIn()
+    expect(consumeRedirectProblem()).toBeUndefined()
+    saveState('s-2')
+    landWith({ error: 'access_denied', state: 's-2' })
+    await completeRedirect()
+    expect(consumeRedirectProblem()).toBeUndefined()
+  })
+
+  test('a failed confirmation also leaves the problem', async () => {
+    saveState('s-1')
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
+    mockUserinfo({}, 500)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await completeRedirect()
+    await pendingSignIn()
+    expect(consumeRedirectProblem()).toBe(PROBLEM)
+  })
+
+  test('router URLs are never read as OAuth fragments', async () => {
+    saveState('s-1')
+    const f = mockUserinfo()
+    for (const h of ['#/search?q=a&error=b', '#/x?access_token=zzz&state=s-1']) {
+      history.replaceState(null, '', `/garage-log/${h}`)
+      await completeRedirect()
+      expect(location.hash).toBe(h)
+    }
+    expect(f).not.toHaveBeenCalled()
+    expect(localStorage.getItem(OAUTH_KEY)).not.toBeNull()
+    expect(await storedToken()).toBeUndefined()
+    expect(consumeRedirectProblem()).toBeUndefined()
+  })
+
+  test('the in-memory token is dropped when the stored account no longer matches it', async () => {
+    await signedIn()
+    expect(await getToken()).toBe('tok-1')
+    await db.meta.put({ key: 'google.account', value: JSON.stringify({ email: 'other@x.com', name: 'O' }) })
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(await db.meta.get('google.token')).toBeUndefined()
+    // and it stays dropped even if the account comes back
+    await db.meta.put({ key: 'google.account', value: JSON.stringify({ email: 'jamie@example.com', name: 'J' }) })
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+  })
+
+  test('the in-memory token is dropped when the account was removed', async () => {
+    await signedIn()
+    await db.meta.delete('google.account')
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+  })
+
+  test('isConfirmingSignIn is true only while the background confirmation runs', async () => {
+    expect(isConfirmingSignIn()).toBe(false)
+    saveState('s-1')
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
+    const { release } = deferredUserinfo()
+    await completeRedirect()
+    expect(isConfirmingSignIn()).toBe(true)
+    release()
+    await pendingSignIn()
+    expect(isConfirmingSignIn()).toBe(false)
+  })
+
+  test('the userinfo request times out after 15 s like a failed confirmation', async () => {
+    const ctrl = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => ctrl.signal)
+    const f = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_res, rej) => {
+          init?.signal?.addEventListener('abort', () =>
+            rej(new DOMException('The operation timed out.', 'TimeoutError')),
+          )
+        }),
+    )
+    vi.stubGlobal('fetch', f)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    saveState('s-1')
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
+    await completeRedirect()
+    expect(timeout).toHaveBeenCalledWith(15_000)
+    expect(f.mock.calls[0][1]?.signal).toBe(ctrl.signal)
+
+    ctrl.abort() // the 15 s are up
+    await pendingSignIn()
+    expect(await storedToken()).toBeUndefined()
+    expect(await isSignedIn()).toBe(false)
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(consumeRedirectProblem()).toBe(PROBLEM)
+    expect(isConfirmingSignIn()).toBe(false)
+    timeout.mockRestore()
+  })
+
+  test('works where AbortSignal.timeout is missing', async () => {
+    const original = AbortSignal.timeout
+    ;(AbortSignal as unknown as { timeout?: unknown }).timeout = undefined
+    try {
+      await signedIn() // its userinfo request has no signal and still confirms
+      expect((await storedToken())?.email).toBe('jamie@example.com')
+      expect(await getToken()).toBe('tok-1')
+    } finally {
+      ;(AbortSignal as unknown as { timeout: unknown }).timeout = original
+    }
   })
 })

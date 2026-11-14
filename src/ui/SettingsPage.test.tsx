@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -32,6 +32,8 @@ const google = vi.hoisted(() => ({
   syncNow: vi.fn(),
   freshSignIn: false,
   pending: Promise.resolve() as Promise<void>,
+  confirming: false,
+  problem: undefined as string | undefined,
 }))
 
 vi.mock('../sync/engine', () => ({
@@ -46,6 +48,12 @@ vi.mock('../sync/auth', () => ({
   signIn: (...a: unknown[]) => google.signIn(...a),
   signOut: (...a: unknown[]) => google.signOut(...a),
   pendingSignIn: () => google.pending,
+  isConfirmingSignIn: () => google.confirming,
+  consumeRedirectProblem: () => {
+    const v = google.problem
+    google.problem = undefined
+    return v
+  },
   consumeRedirectSignIn: () => {
     const v = google.freshSignIn
     google.freshSignIn = false
@@ -159,6 +167,8 @@ beforeEach(async () => {
   google.syncNow.mockReset().mockResolvedValue(undefined)
   google.freshSignIn = false
   google.pending = Promise.resolve()
+  google.confirming = false
+  google.problem = undefined
   await Promise.all([
     db.vehicles.clear(),
     db.entries.clear(),
@@ -327,15 +337,55 @@ describe('SettingsPage', () => {
   test('back from Google while the account is still being read, it shows it once known', async () => {
     let finish!: () => void
     google.pending = new Promise<void>((r) => (finish = r))
+    google.confirming = true
     google.matches = [{ id: 'f1', name: 'Garage Log', ownerEmail: 'o@example.com', shared: true }]
     renderPage()
     await new Promise((r) => setTimeout(r, 20))
-    expect(screen.getByText('Not signed in')).toBeInTheDocument()
+    expect(screen.getByText('Checking sign-in…')).toBeInTheDocument()
+    expect(screen.queryByText('Not signed in')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeDisabled()
     google.account = { name: 'Jamie D', email: 'jamie@example.com' }
     google.freshSignIn = true
+    google.confirming = false
     finish()
+    await waitFor(() => expect(screen.queryByText('Checking sign-in…')).not.toBeInTheDocument())
     expect(await screen.findByText(/jamie@example.com/)).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: /o@example.com/ })).toBeInTheDocument()
+  })
+
+  test('a confirmation that fails ends on Not signed in with Sign in enabled and the problem shown', async () => {
+    let finish!: () => void
+    google.pending = new Promise<void>((r) => (finish = r))
+    google.confirming = true
+    renderPage()
+    expect(await screen.findByText('Checking sign-in…')).toBeInTheDocument()
+    google.confirming = false
+    google.problem = "Sign-in didn't complete — please try again."
+    finish()
+    expect(await screen.findByText('Not signed in')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveTextContent("Sign-in didn't complete")
+  })
+
+  test('a rejected redirect shows "Sign-in didn\'t complete" once', async () => {
+    google.problem = "Sign-in didn't complete — please try again."
+    renderPage()
+    expect(await screen.findByRole('alert')).toHaveTextContent("Sign-in didn't complete — please try again.")
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+  })
+
+  test('Back from Google (bfcache restore) re-enables Sign in', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const button = await screen.findByRole('button', { name: 'Sign in' })
+    await user.click(button)
+    await waitFor(() => expect(button).toBeDisabled())
+    const ev = new Event('pageshow')
+    Object.defineProperty(ev, 'persisted', { value: true })
+    act(() => {
+      window.dispatchEvent(ev)
+    })
+    await waitFor(() => expect(button).toBeEnabled())
   })
 
   test('an ordinary visit while signed in without a folder does not list folders by itself', async () => {

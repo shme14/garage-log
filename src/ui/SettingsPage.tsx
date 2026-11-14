@@ -6,8 +6,10 @@ import { readAll } from '../db/repo'
 import { downloadFile, exportJson, exportText, localDateStamp } from '../export/export'
 import { loadSeed } from '../import/seed'
 import {
+  consumeRedirectProblem,
   consumeRedirectSignIn,
   getAccount,
+  isConfirmingSignIn,
   pendingSignIn,
   signIn,
   signOut,
@@ -101,6 +103,8 @@ function SyncSection() {
   const [matches, setMatches] = useState<DriveFolder[] | undefined>() // undefined = chooser closed
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  // True while a sign-in just back from Google is still being confirmed (userinfo).
+  const [checking, setChecking] = useState(() => isConfirmingSignIn())
 
   useEffect(
     () =>
@@ -133,12 +137,25 @@ function SyncSection() {
         if (!live) return
         setAccount(a)
         setFolderInfo(f)
+        setChecking(false)
+        const problem = consumeRedirectProblem()
+        if (problem) setError(problem)
         // Just back from Google with no folder yet: list the folders to pick from (never auto-pick).
         if (consumeRedirectSignIn() && a && !f) void loadMatches()
       })
     return () => {
       live = false
     }
+  }, [])
+
+  // signIn leaves the page with busy set; if the browser brings this page back from its
+  // back-forward cache (Back from Google), the Sign in button must work again.
+  useEffect(() => {
+    function onPageShow(ev: PageTransitionEvent) {
+      if (ev.persisted) setBusy(false)
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
   }, [])
 
   // Takes the page to Google; it comes back here signed in (see the mount effect).
@@ -220,7 +237,9 @@ function SyncSection() {
       )}
 
       <p className="settings-line">
-        {account ? (
+        {checking ? (
+          <span className="muted">Checking sign-in…</span>
+        ) : account ? (
           <>
             Signed in as {account.name} ({account.email})
           </>
@@ -297,7 +316,7 @@ function SyncSection() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={busy}
+            disabled={busy || checking}
             onClick={() => void onSignIn()}
           >
             Sign in

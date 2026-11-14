@@ -11,7 +11,10 @@ import { AuthError } from './store'
 //
 // The access token is kept in memory and in IndexedDB (meta 'google.token') only until it expires
 // (~1 h), so reopening the app within the hour needs no new sign-in. It is never written to
-// localStorage or logs, and never stays in the URL after load. The account (name + email) is stored.
+// localStorage or logs, and is not left in the live URL or this tab's session history (the
+// fragment is replaced before render). The browser's global history may still record the
+// redirect URL with the token: that is inherent to the implicit flow, and the token expires in
+// ~1 h. The account (name + email) is stored.
 
 const AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
@@ -28,6 +31,10 @@ const OAUTH_KEY = 'garage.oauth'
 const PENDING_MAX_AGE_MS = 10 * 60_000
 
 const REFRESH_MARGIN_MS = 60_000
+const USERINFO_TIMEOUT_MS = 15_000
+
+/** Shown by Settings when a redirect came back but could not be used. */
+export const REDIRECT_PROBLEM = "Sign-in didn't complete — please try again."
 
 export interface GoogleAccount {
   name: string
@@ -51,6 +58,8 @@ interface StoredToken {
 
 let token: string | undefined
 let expiresAt = 0
+// The account the in-memory token was confirmed for (userinfo); undefined until confirmed.
+let tokenEmail: string | undefined
 // A token Google rejected (401): never load it again from the database, even if the delete of the
 // persisted copy has not landed yet.
 let rejected: string | undefined
@@ -58,6 +67,7 @@ let rejected: string | undefined
 function forgetMemoryToken(): void {
   token = undefined
   expiresAt = 0
+  tokenEmail = undefined
 }
 
 async function deleteStoredToken(): Promise<void> {
@@ -99,8 +109,9 @@ function fresh(at: number): boolean {
 
 /**
  * A valid access token: the in-memory one, else the persisted one, if it has more than 60 s left.
- * A persisted token is used only when it was confirmed (userinfo) for the stored account; one
- * left unconfirmed (page closed first) or confirmed for another account is deleted.
+ * Either is used only when it was confirmed (userinfo) for the stored account: an in-memory token
+ * whose account no longer matches is forgotten, and a persisted one left unconfirmed (page closed
+ * first) or confirmed for another account is deleted.
  * Otherwise throws AuthError so the sync chip asks for a tap on "Sign in".
  *
  * This never starts a sign-in itself (no navigation, no popup): it runs from background sync
@@ -108,7 +119,17 @@ function fresh(at: number): boolean {
  */
 export async function getToken(): Promise<string> {
   await verifying // a token just back from Google is not used before its account is known
-  if (token && fresh(expiresAt)) return token
+  if (token && fresh(expiresAt)) {
+    const mine = token
+    let account: GoogleAccount | undefined
+    try {
+      account = await getAccount()
+    } catch {
+      account = undefined
+    }
+    if (token === mine && tokenEmail !== undefined && tokenEmail === account?.email) return mine
+    if (token === mine) rejected = mine // another account now (or none): never reuse this one
+  }
   forgetMemoryToken()
   let stored: Awaited<ReturnType<typeof readStoredToken>>
   let account: GoogleAccount | undefined
@@ -128,6 +149,7 @@ export async function getToken(): Promise<string> {
   ) {
     token = stored.token
     expiresAt = stored.expiresAt
+    tokenEmail = stored.email
     return token
   }
   if (stored) await deleteStoredToken()
@@ -143,8 +165,12 @@ let knownEmail: string | undefined
 // Set when this page load finished a sign-in; read once by the settings page (to offer folders).
 let redirectSignIn = false
 
+// Set when this page load got a redirect it could not use; read once by the settings page.
+let redirectProblem: string | undefined
+
 // The background step of completeRedirect (userinfo + account). Never rejects.
 let verifying: Promise<void> = Promise.resolve()
+let confirming = false
 // Bumped by signOut so a background step that finishes afterwards stores nothing.
 let generation = 0
 
@@ -154,6 +180,18 @@ let generation = 0
  */
 export function pendingSignIn(): Promise<void> {
   return verifying
+}
+
+/** True while this page load is still confirming a sign-in in the background. */
+export function isConfirmingSignIn(): boolean {
+  return confirming
+}
+
+/** Once after a page load whose Google redirect could not be used: the message to show. */
+export function consumeRedirectProblem(): string | undefined {
+  const v = redirectProblem
+  redirectProblem = undefined
+  return v
 }
 
 async function readAccount(): Promise<GoogleAccount | undefined> {
@@ -189,7 +227,17 @@ export function consumeRedirectSignIn(): boolean {
 }
 
 async function fetchUserinfo(accessToken: string): Promise<GoogleAccount> {
-  const res = await fetch(USERINFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } })
+  let signal: AbortSignal | undefined
+  try {
+    signal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(USERINFO_TIMEOUT_MS) : undefined
+  } catch {
+    signal = undefined
+  }
+  // A timeout rejects like any other failure: the token stays unconfirmed and is dropped.
+  const res = await fetch(USERINFO_URL, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    ...(signal ? { signal } : {}),
+  })
   if (!res.ok) throw new Error(`Could not read your Google profile (${res.status})`)
   const info = (await res.json()) as { name?: string; email?: string }
   if (!info.email) throw new Error('Google did not return an email address')
@@ -281,7 +329,9 @@ function safeReturnHash(h: string | undefined): string {
 export async function completeRedirect(): Promise<void> {
   let params: URLSearchParams
   try {
-    params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const hash = window.location.hash
+    if (hash.startsWith('#/')) return // a router URL, never an OAuth answer
+    params = new URLSearchParams(hash.replace(/^#/, ''))
   } catch {
     return
   }
@@ -304,6 +354,7 @@ export async function completeRedirect(): Promise<void> {
   const state = params.get('state')
   if (!pending || !state || state !== pending.state) {
     console.warn('Google sign-in answer ignored (state mismatch)')
+    redirectProblem = REDIRECT_PROBLEM
     return
   }
 
@@ -321,7 +372,10 @@ export async function completeRedirect(): Promise<void> {
   } catch {
     persisted = Promise.resolve(false)
   }
-  verifying = verifyAccount(accessToken, generation, persisted)
+  confirming = true
+  verifying = verifyAccount(accessToken, generation, persisted).finally(() => {
+    confirming = false
+  })
   await persisted
 }
 
@@ -337,6 +391,7 @@ async function verifyAccount(
     if (gen !== generation) return // signed out meanwhile
     await applyAccount(account)
     if (gen !== generation) return
+    if (token === accessToken) tokenEmail = account.email
     if (wasPersisted && token === accessToken) {
       // Confirm the persisted copy: only now may a later page load use it (see getToken).
       const confirmed: StoredToken = { token: accessToken, expiresAt, email: account.email }
@@ -348,6 +403,7 @@ async function verifyAccount(
     if (gen === generation) {
       if (token === accessToken) forgetMemoryToken()
       await deleteStoredToken()
+      redirectProblem = REDIRECT_PROBLEM
     }
     console.error('Google sign-in could not be completed:', e instanceof Error ? e.message : 'unknown error')
   }
@@ -403,5 +459,7 @@ export function resetAuthForTests(): void {
   rejected = undefined
   knownEmail = undefined
   redirectSignIn = false
+  redirectProblem = undefined
   verifying = Promise.resolve()
+  confirming = false
 }
