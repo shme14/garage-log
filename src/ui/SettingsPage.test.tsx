@@ -30,7 +30,7 @@ const google = vi.hoisted(() => ({
   setFolder: vi.fn(),
   ensureSyncStarted: vi.fn(),
   syncNow: vi.fn(),
-  preloadGsi: vi.fn(),
+  freshSignIn: false,
 }))
 
 vi.mock('../sync/engine', () => ({
@@ -44,7 +44,11 @@ vi.mock('../sync/auth', () => ({
   getAccount: async () => google.account,
   signIn: (...a: unknown[]) => google.signIn(...a),
   signOut: (...a: unknown[]) => google.signOut(...a),
-  preloadGsi: () => google.preloadGsi(),
+  consumeRedirectSignIn: () => {
+    const v = google.freshSignIn
+    google.freshSignIn = false
+    return v
+  },
 }))
 vi.mock('../sync/drive', () => ({
   getFolder: async () => google.folder,
@@ -133,10 +137,8 @@ beforeEach(async () => {
   google.account = undefined
   google.folder = undefined
   google.matches = []
-  google.signIn.mockReset().mockImplementation(async () => {
-    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
-    return google.account
-  })
+  // The real signIn navigates to Google and never resolves.
+  google.signIn.mockReset().mockImplementation(() => new Promise(() => {}))
   google.signOut.mockReset().mockImplementation(async () => {
     google.account = undefined
     google.folder = undefined
@@ -153,7 +155,7 @@ beforeEach(async () => {
   })
   google.ensureSyncStarted.mockReset().mockResolvedValue(true)
   google.syncNow.mockReset().mockResolvedValue(undefined)
-  google.preloadGsi.mockReset()
+  google.freshSignIn = false
   await Promise.all([
     db.vehicles.clear(),
     db.entries.clear(),
@@ -293,15 +295,25 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument()
   })
 
-  test('Sign in calls signIn, shows the account and lists folders to pick from (no auto-pick)', async () => {
+  test('Sign in starts the Google redirect and waits (busy) for the page to leave', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const button = await screen.findByRole('button', { name: 'Sign in' })
+    await user.click(button)
+    expect(google.signIn).toHaveBeenCalledTimes(1)
+    expect(google.signIn).toHaveBeenCalledWith()
+    await waitFor(() => expect(button).toBeDisabled())
+    expect(google.findFolders).not.toHaveBeenCalled()
+  })
+
+  test('back from Google with no folder yet, it lists folders to pick from (no auto-pick)', async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    google.freshSignIn = true
     google.matches = [
       { id: 'f1', name: 'Garage Log', ownerEmail: 'owner@example.com', shared: true },
     ]
-    const user = userEvent.setup()
     renderPage()
-    await user.click(await screen.findByRole('button', { name: 'Sign in' }))
     expect(await screen.findByText(/jamie@example.com/)).toBeInTheDocument()
-    expect(google.signIn).toHaveBeenCalledTimes(1)
     expect(
       await screen.findByRole('button', { name: /Garage Log.*owner@example.com/ }),
     ).toBeInTheDocument()
@@ -309,13 +321,30 @@ describe('SettingsPage', () => {
     expect(google.ensureSyncStarted).not.toHaveBeenCalled()
   })
 
-  test('shows why a sign-in failed', async () => {
-    google.signIn.mockRejectedValue(new Error('popup_closed'))
+  test('an ordinary visit while signed in without a folder does not list folders by itself', async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    renderPage()
+    expect(await screen.findByText('No folder chosen yet')).toBeInTheDocument()
+    expect(google.findFolders).not.toHaveBeenCalled()
+  })
+
+  test('back from Google with a folder already chosen, it does not list folders', async () => {
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    google.folder = { id: 'f1', name: 'Garage Log', ownerEmail: 'o@example.com', shared: true }
+    google.freshSignIn = true
+    renderPage()
+    expect(await screen.findByText(/Folder: Garage Log/)).toBeInTheDocument()
+    expect(google.findFolders).not.toHaveBeenCalled()
+  })
+
+  test('shows why a sign-in could not start', async () => {
+    google.signIn.mockRejectedValue(new Error('blocked'))
     const user = userEvent.setup()
     renderPage()
     await user.click(await screen.findByRole('button', { name: 'Sign in' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/popup_closed/)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/blocked/)
     expect(screen.getByText('Not signed in')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
   })
 
   describe('choosing a folder', () => {

@@ -79,7 +79,7 @@ async function driveFetch(url: string, init: RequestInit = {}): Promise<Response
   }
   if (res.ok) return res
   if (res.status === 401) {
-    clearToken()
+    await clearToken()
     throw new AuthError('Google rejected the sign-in')
   }
   const body = await res.text().catch(() => '')

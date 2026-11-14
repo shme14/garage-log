@@ -1,4 +1,4 @@
-import { isSignedIn, preloadGsi } from './auth'
+import { completeRedirect, isSignedIn } from './auth'
 import { createDriveStore, getFolderId } from './drive'
 import { startSync } from './engine'
 
@@ -30,7 +30,6 @@ export function resetSyncSessionForTests(): void {
 
 /** Called once from main.tsx. Also covers recovery after iOS evicts the local DB: the first pass pulls everything. */
 export async function bootSync(): Promise<void> {
-  preloadGsi()
   // Ask the browser not to evict our IndexedDB under storage pressure (best effort; iOS may ignore it).
   try {
     void navigator.storage?.persist?.()?.catch(() => {})
@@ -42,4 +41,21 @@ export async function bootSync(): Promise<void> {
   } catch {
     // an unreadable meta table must not stop the app from rendering
   }
+}
+
+/**
+ * App entry, called once from main.tsx. If Google has just redirected back with a token in the
+ * URL fragment, completeRedirect takes it out of the URL (and stores the sign-in) BEFORE render,
+ * so HashRouter never sees it as a route; bootSync then runs with the new account in place.
+ * Nothing here can stop the app from rendering.
+ */
+export async function startApp(render: () => void): Promise<void> {
+  try {
+    await completeRedirect()
+  } catch {
+    // completeRedirect does not throw, but the app must render regardless
+  }
+  render()
+  // Once per app session, outside React so StrictMode cannot run it twice.
+  void bootSync()
 }

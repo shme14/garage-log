@@ -5,7 +5,13 @@ import { db, getEditContext, getUser, setUser } from '../db/db'
 import { readAll } from '../db/repo'
 import { downloadFile, exportJson, exportText, localDateStamp } from '../export/export'
 import { loadSeed } from '../import/seed'
-import { getAccount, preloadGsi, signIn, signOut, type GoogleAccount } from '../sync/auth'
+import {
+  consumeRedirectSignIn,
+  getAccount,
+  signIn,
+  signOut,
+  type GoogleAccount,
+} from '../sync/auth'
 import { ensureSyncStarted } from '../sync/boot'
 import {
   createFolder,
@@ -103,19 +109,6 @@ function SyncSection() {
     [],
   )
 
-  useEffect(() => {
-    preloadGsi() // so the Sign in tap can open Google's popup straight away
-    let live = true
-    void Promise.all([getAccount(), getFolder()]).then(([a, f]) => {
-      if (!live) return
-      setAccount(a)
-      setFolderInfo(f)
-    })
-    return () => {
-      live = false
-    }
-  }, [])
-
   // Lists the Garage Log folders this account can see. It never picks one by itself.
   async function loadMatches(keepError = false) {
     setBusy(true)
@@ -130,21 +123,30 @@ function SyncSection() {
     }
   }
 
-  // Called straight from the click so the Google popup is allowed.
+  useEffect(() => {
+    let live = true
+    void Promise.all([getAccount(), getFolder()]).then(([a, f]) => {
+      if (!live) return
+      setAccount(a)
+      setFolderInfo(f)
+      // Just back from Google with no folder yet: list the folders to pick from (never auto-pick).
+      if (consumeRedirectSignIn() && a && !f) void loadMatches()
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  // Takes the page to Google; it comes back here signed in (see the mount effect).
   async function onSignIn() {
     setBusy(true)
     setError(undefined)
     try {
-      const a = await signIn()
-      setAccount(a)
-      setFolderInfo(await getFolder())
+      await signIn() // never resolves: the page is leaving
     } catch (e) {
       setError(`Sign-in failed: ${errorMessage(e)}`)
       setBusy(false)
-      return
     }
-    setBusy(false)
-    if (!(await getFolder())) await loadMatches()
   }
 
   async function onSignOut() {

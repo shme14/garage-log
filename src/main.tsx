@@ -1,14 +1,14 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
-import { bootSync } from './sync/boot'
+import { startApp } from './sync/boot'
 import './ui/styles.css'
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+// startApp finishes a Google sign-in redirect (token out of the URL) before rendering, then boots sync.
+void startApp(() =>
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  ),
 )
-
-// Once per app session, outside React so StrictMode cannot run it twice.
-void bootSync()

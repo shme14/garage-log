@@ -5,89 +5,88 @@ const engine = vi.hoisted(() => ({ stopSync: vi.fn() }))
 vi.mock('./engine', () => engine)
 
 import { AuthError } from './store'
-import { clearToken, getAccount, getToken, isSignedIn, signIn, signOut } from './auth'
+import {
+  clearToken,
+  completeRedirect,
+  consumeRedirectSignIn,
+  getAccount,
+  getToken,
+  isSignedIn,
+  resetAuthForTests,
+  signIn,
+  signOut,
+} from './auth'
 
-interface TokenResp {
-  access_token?: string
-  expires_in?: number
-  error?: string
-}
-interface Cfg {
-  client_id: string
-  scope: string
-  callback: (r: TokenResp) => void
-  error_callback: (e: { type: string }) => void
-}
-
-// A fake google.accounts.oauth2 whose requestAccessToken answers from a queue.
-function installGoogle() {
-  const requests: Record<string, unknown>[] = []
-  const answers: (TokenResp | { fail: string })[] = []
-  let cfg: Cfg | undefined
-  const revoke = vi.fn((_t: string, done?: () => void) => done?.())
-  const oauth2 = {
-    initTokenClient: vi.fn((c: Cfg) => {
-      cfg = c
-      return {
-        requestAccessToken(o: Record<string, unknown>) {
-          requests.push(o)
-          const a = answers.shift()
-          if (!a) return // never answers
-          if ('fail' in a) cfg!.error_callback({ type: a.fail })
-          else cfg!.callback(a)
-        },
-      }
-    }),
-    revoke,
-  }
-  ;(window as unknown as { google: unknown }).google = { accounts: { oauth2 } }
-  return { requests, answers, oauth2, revoke, config: () => cfg }
-}
+const SCOPE = 'https://www.googleapis.com/auth/drive openid email profile'
+const OAUTH_KEY = 'garage.oauth'
 
 function mockUserinfo(body: unknown = { name: 'Jamie D', email: 'jamie@example.com' }, status = 200) {
-  const f = vi.fn(async () => new Response(JSON.stringify(body), { status }))
+  const f = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify(body), { status }))
   vi.stubGlobal('fetch', f)
   return f
 }
 
+/** Put the page where Google sends it back: base URL + #fragment params. */
+function landWith(params: Record<string, string>) {
+  const frag = new URLSearchParams(params).toString()
+  history.replaceState(null, '', `${location.pathname}${location.search}#${frag}`)
+}
+
+function saveState(state: string, returnHash = '#/settings') {
+  sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ state, returnHash }))
+}
+
+async function storedToken(): Promise<{ token: string; expiresAt: number } | undefined> {
+  const row = await db.meta.get('google.token')
+  return row ? (JSON.parse(row.value) as { token: string; expiresAt: number }) : undefined
+}
+
+/** A successful round trip through Google: state saved, page lands with a token. */
+async function signedIn(token = 'tok-1', expiresIn = 3599) {
+  saveState('s-ok')
+  landWith({ access_token: token, token_type: 'Bearer', expires_in: String(expiresIn), scope: SCOPE, state: 's-ok' })
+  mockUserinfo()
+  await completeRedirect()
+}
+
 beforeEach(async () => {
   await db.meta.clear()
-  await getAccount() // what boot does: mirrors the stored account for signIn's login_hint
-  clearToken()
+  sessionStorage.clear()
+  history.replaceState(null, '', '/garage-log/#/')
+  resetAuthForTests()
+  await getAccount() // what boot does: mirrors the stored account
   engine.stopSync.mockClear()
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
-  delete (window as unknown as { google?: unknown }).google
 })
 
 describe('signIn', () => {
-  test('requests the fixed scope with no prompt, stores the account (not the token), sets the user', async () => {
-    const g = installGoogle()
-    g.answers.push({ access_token: 'tok-1', expires_in: 3599 })
+  test('navigates to Google with every authorize param and saves state + return hash', async () => {
+    history.replaceState(null, '', '/garage-log/#/vehicle/v1')
     const f = mockUserinfo()
+    const go = vi.fn()
 
-    const acct = await signIn()
+    void signIn(go)
+    await vi.waitFor(() => expect(go).toHaveBeenCalledTimes(1))
 
-    expect(acct).toEqual({ name: 'Jamie D', email: 'jamie@example.com' })
-    const cfg = g.config()!
-    expect(cfg.scope).toBe('https://www.googleapis.com/auth/drive openid email profile')
-    expect(cfg.client_id).toMatch(/\.apps\.googleusercontent\.com$/)
-    expect(g.requests).toEqual([{ prompt: '' }])
-    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('https://www.googleapis.com/oauth2/v3/userinfo')
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1')
-    expect(await getUser()).toBe('Jamie D')
-    expect(JSON.parse((await db.meta.get('google.account'))!.value)).toEqual(acct)
-    expect(await isSignedIn()).toBe(true)
-    expect(await getAccount()).toEqual(acct)
-    // the token never lands in storage
-    const rows = JSON.stringify(await db.meta.toArray())
-    expect(rows).not.toContain('tok-1')
-    expect(JSON.stringify(Object.entries(localStorage))).not.toContain('tok-1')
-    expect(await getToken()).toBe('tok-1')
+    const url = new URL(go.mock.calls[0][0] as string)
+    expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
+    const p = url.searchParams
+    expect(p.get('client_id')).toMatch(/\.apps\.googleusercontent\.com$/)
+    expect(p.get('redirect_uri')).toBe(location.origin + import.meta.env.BASE_URL)
+    expect(p.get('response_type')).toBe('token')
+    expect(p.get('scope')).toBe(SCOPE)
+    expect(p.get('include_granted_scopes')).toBe('true')
+    expect(p.has('login_hint')).toBe(false)
+    const state = p.get('state')!
+    expect(state).toMatch(/^[0-9a-f-]{36}$/)
+
+    const saved = JSON.parse(sessionStorage.getItem(OAUTH_KEY)!) as Record<string, string>
+    expect(saved).toEqual({ state, returnHash: '#/vehicle/v1' })
+    expect(f).not.toHaveBeenCalled()
   })
 
   test('preselects the stored account with login_hint', async () => {
@@ -95,48 +94,163 @@ describe('signIn', () => {
       key: 'google.account',
       value: JSON.stringify({ email: 'jamie@example.com', name: 'Jamie D' }),
     })
-    await getAccount() // boot reads the account before any tap
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
+    await getAccount()
+    const go = vi.fn()
+    void signIn(go)
+    await vi.waitFor(() => expect(go).toHaveBeenCalledTimes(1))
+    expect(new URL(go.mock.calls[0][0] as string).searchParams.get('login_hint')).toBe('jamie@example.com')
+  })
+
+  test('uses a fresh state each time', async () => {
+    const go = vi.fn()
+    void signIn(go)
+    void signIn(go)
+    await vi.waitFor(() => expect(go).toHaveBeenCalledTimes(2))
+    const states = go.mock.calls.map((c) => new URL(c[0] as string).searchParams.get('state'))
+    expect(states[0]).not.toBe(states[1])
+  })
+
+  test('never resolves (the page is leaving)', async () => {
+    const go = vi.fn()
+    let settled = false
+    void signIn(go).then(
+      () => (settled = true),
+      () => (settled = true),
+    )
+    await vi.waitFor(() => expect(go).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 20))
+    expect(settled).toBe(false)
+  })
+
+  test('rejects when navigation throws', async () => {
+    await expect(
+      signIn(() => {
+        throw new Error('blocked')
+      }),
+    ).rejects.toThrow(/blocked/)
+  })
+})
+
+describe('completeRedirect', () => {
+  test('strips the fragment synchronously, stores the account and the token', async () => {
+    saveState('s-1', '#/settings')
+    landWith({ access_token: 'tok-1', token_type: 'Bearer', expires_in: '3599', scope: SCOPE, state: 's-1' })
+    const f = mockUserinfo()
+    const before = Date.now()
+
+    const p = completeRedirect()
+    expect(location.hash).toBe('#/settings') // before any await: the router never sees the token
+    expect(location.href).not.toContain('tok-1')
+    await p
+
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://www.googleapis.com/oauth2/v3/userinfo')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-1')
+    expect(JSON.parse((await db.meta.get('google.account'))!.value)).toEqual({
+      name: 'Jamie D',
+      email: 'jamie@example.com',
+    })
+    expect(await isSignedIn()).toBe(true)
+    expect(await getUser()).toBe('Jamie D')
+    const t = (await storedToken())!
+    expect(t.token).toBe('tok-1')
+    expect(t.expiresAt).toBeGreaterThanOrEqual(before + 3599_000)
+    expect(t.expiresAt).toBeLessThanOrEqual(Date.now() + 3599_000)
+    expect(await getToken()).toBe('tok-1')
+    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
+    expect(JSON.stringify(Object.entries(localStorage))).not.toContain('tok-1')
+  })
+
+  test('falls back to #/ when no return hash was saved', async () => {
+    sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ state: 's-1', returnHash: '' }))
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
     mockUserinfo()
-    const p = signIn() // still synchronous: the gesture must reach requestAccessToken
-    expect(g.requests).toEqual([{ prompt: '', login_hint: 'jamie@example.com' }])
+    const p = completeRedirect()
+    expect(location.hash).toBe('#/')
     await p
   })
 
-  test('rejects when the user closes the popup, and stores nothing', async () => {
-    const g = installGoogle()
-    g.answers.push({ fail: 'popup_closed' })
-    mockUserinfo()
-    await expect(signIn()).rejects.toThrow(/popup_closed/)
-    expect(await isSignedIn()).toBe(false)
+  test('marks a fresh sign-in once, for the settings page to offer folders', async () => {
+    await signedIn()
+    expect(consumeRedirectSignIn()).toBe(true)
+    expect(consumeRedirectSignIn()).toBe(false)
   })
 
-  test('rejects on an error response', async () => {
-    const g = installGoogle()
-    g.answers.push({ error: 'access_denied' })
-    mockUserinfo()
-    await expect(signIn()).rejects.toThrow(/access_denied/)
+  test('a mismatched state is ignored: no token, no account, URL cleaned', async () => {
+    saveState('s-mine', '#/settings')
+    landWith({ access_token: 'tok-evil', expires_in: '3599', state: 's-other' })
+    const f = mockUserinfo()
+    await completeRedirect()
+    expect(location.hash).toBe('#/settings')
+    expect(f).not.toHaveBeenCalled()
+    expect(await storedToken()).toBeUndefined()
     expect(await isSignedIn()).toBe(false)
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
+    expect(consumeRedirectSignIn()).toBe(false)
   })
 
-  test('requests the token synchronously inside the click handler when GIS is already loaded', async () => {
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
+  test('nothing saved (state missing) is ignored, URL cleaned to #/', async () => {
+    landWith({ access_token: 'tok-evil', expires_in: '3599', state: 's-x' })
+    const f = mockUserinfo()
+    await completeRedirect()
+    expect(location.hash).toBe('#/')
+    expect(f).not.toHaveBeenCalled()
+    expect(await storedToken()).toBeUndefined()
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+  })
+
+  test('a token without state is ignored', async () => {
+    saveState('s-mine')
+    landWith({ access_token: 'tok-evil', expires_in: '3599' })
     mockUserinfo()
-    const p = signIn() // no await before checking
-    expect(g.requests).toHaveLength(1)
+    await completeRedirect()
+    expect(await storedToken()).toBeUndefined()
+  })
+
+  test('#error=access_denied stores nothing and cleans the URL to the return hash', async () => {
+    saveState('s-1', '#/settings')
+    landWith({ error: 'access_denied', state: 's-1' })
+    const f = mockUserinfo()
+    const p = completeRedirect()
+    expect(location.hash).toBe('#/settings')
     await p
+    expect(f).not.toHaveBeenCalled()
+    expect(await storedToken()).toBeUndefined()
+    expect(await isSignedIn()).toBe(false)
+    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
+  })
+
+  test('does nothing when the hash holds no OAuth params', async () => {
+    history.replaceState(null, '', '/garage-log/#/search?q=error')
+    saveState('s-1')
+    const f = mockUserinfo()
+    await completeRedirect()
+    expect(location.hash).toBe('#/search?q=error')
+    expect(f).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(OAUTH_KEY)).not.toBeNull()
+  })
+
+  test('a failing userinfo request keeps no token and does not throw', async () => {
+    saveState('s-1')
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
+    mockUserinfo({}, 500)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(completeRedirect()).resolves.toBeUndefined()
+    expect(location.hash).toBe('#/settings')
+    expect(await storedToken()).toBeUndefined()
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(JSON.stringify(err.mock.calls)).not.toContain('tok-1')
+    err.mockRestore()
   })
 
   test('signing in as a different account forgets the previous folder', async () => {
     await db.meta.put({ key: 'google.account', value: JSON.stringify({ email: 'old@x.com', name: 'Old' }) })
     await db.meta.put({ key: 'google.folderId', value: 'folder-old' })
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+    await db.meta.put({ key: 'google.folderInfo', value: '{}' })
+    await signedIn()
     expect(await db.meta.get('google.folderId')).toBeUndefined()
+    expect(await db.meta.get('google.folderInfo')).toBeUndefined()
   })
 
   test('keeps a stored user name when the same account signs in again', async () => {
@@ -145,28 +259,19 @@ describe('signIn', () => {
       key: 'google.account',
       value: JSON.stringify({ email: 'jamie@example.com', name: 'Jamie D' }),
     })
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+    await signedIn()
     expect(await getUser()).toBe('Chosen Name')
   })
 
   test('sets the user name when none is stored yet', async () => {
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+    await signedIn()
     expect(await getUser()).toBe('Jamie D')
   })
 
   test('sets the user name when a different account signs in', async () => {
     await setUser('Old Name')
     await db.meta.put({ key: 'google.account', value: JSON.stringify({ email: 'old@x.com', name: 'Old' }) })
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+    await signedIn()
     expect(await getUser()).toBe('Jamie D')
   })
 
@@ -176,127 +281,154 @@ describe('signIn', () => {
       value: JSON.stringify({ email: 'jamie@example.com', name: 'Jamie D' }),
     })
     await db.meta.put({ key: 'google.folderId', value: 'folder-1' })
-    const g = installGoogle()
-    g.answers.push({ access_token: 't', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+    await signedIn()
     expect((await db.meta.get('google.folderId'))?.value).toBe('folder-1')
   })
 })
 
 describe('getToken', () => {
-  async function signedIn(g: ReturnType<typeof installGoogle>, expiresIn = 3599) {
-    g.answers.push({ access_token: 'tok-1', expires_in: expiresIn })
-    mockUserinfo()
-    await signIn()
-    g.requests.length = 0
-  }
-
-  test('returns the cached token while more than 60 s remain', async () => {
-    const g = installGoogle()
-    await signedIn(g)
+  test('returns the in-memory token while more than 60 s remain', async () => {
+    await signedIn()
     expect(await getToken()).toBe('tok-1')
-    expect(g.requests).toHaveLength(0)
   })
 
-  // GIS opens a popup for every token request, even with prompt 'none'. getToken runs from
-  // background sync passes (no user gesture), so it must never request: the browser would
-  // block the popup and nag the user ("allow this site to open…") on every pass.
-  test('within 60 s of expiry it throws AuthError without opening a popup', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
+  test('after a reload it returns the persisted token while it is valid', async () => {
+    await signedIn('tok-1', 3599)
+    resetAuthForTests() // a fresh page: memory is empty
+    const f = mockUserinfo()
+    expect(await getToken()).toBe('tok-1')
+    expect(f).not.toHaveBeenCalled()
+  })
+
+  test('an expired persisted token throws AuthError and is deleted', async () => {
+    await db.meta.put({
+      key: 'google.token',
+      value: JSON.stringify({ token: 'old', expiresAt: Date.now() - 1000 }),
+    })
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-    expect(g.requests).toHaveLength(0)
+    expect(await db.meta.get('google.token')).toBeUndefined()
   })
 
-  test('repeated background calls after expiry never open a popup', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
+  test('a persisted token within 60 s of expiry is treated as expired', async () => {
+    await signedIn('tok-1', 30)
+    resetAuthForTests()
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(await db.meta.get('google.token')).toBeUndefined()
+  })
+
+  test('within 60 s of expiry it throws AuthError and never navigates or fetches', async () => {
+    await signedIn('tok-1', 30)
+    const f = mockUserinfo()
+    const href = location.href
     await Promise.allSettled([getToken(), getToken(), getToken()])
-    expect(g.requests).toHaveLength(0)
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(f).not.toHaveBeenCalled()
+    expect(location.href).toBe(href) // no navigation
+    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull() // no sign-in was started
   })
 
-  test('after expiry, a tap on Sign in gets a fresh token that getToken then returns', async () => {
-    const g = installGoogle()
-    await signedIn(g, 30)
+  test('with no prior sign-in it throws AuthError', async () => {
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-    g.answers.push({ access_token: 'tok-2', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
-    expect(await getToken()).toBe('tok-2')
   })
 
-  test('with no prior sign-in it throws AuthError without opening anything', async () => {
-    const g = installGoogle()
+  test('a corrupt persisted value throws AuthError and is deleted', async () => {
+    await db.meta.put({ key: 'google.token', value: 'not json' })
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-    expect(g.requests).toHaveLength(0)
+    expect(await db.meta.get('google.token')).toBeUndefined()
+  })
+})
+
+describe('clearToken', () => {
+  test('forgets the token in memory and in the database', async () => {
+    await signedIn()
+    await clearToken()
+    expect(await db.meta.get('google.token')).toBeUndefined()
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
   })
 
-  test('after clearToken, getToken asks for a sign-in instead of re-requesting', async () => {
-    const g = installGoogle()
-    await signedIn(g)
-    clearToken()
+  test('a rejected token is not reloaded even before the delete lands', async () => {
+    await signedIn()
+    const p = clearToken() // not awaited, as from a 401 inside a sync pass
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-    expect(g.requests).toHaveLength(0)
+    await p
   })
 })
 
 describe('signOut', () => {
-  test('clears account, folder and token, revokes best-effort and stops sync', async () => {
-    const g = installGoogle()
-    g.answers.push({ access_token: 'tok-1', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+  test('clears account, folder and token (memory and DB), revokes and stops sync', async () => {
+    await signedIn()
     await db.meta.put({ key: 'google.folderId', value: 'folder-1' })
     await db.meta.put({ key: 'google.folderInfo', value: '{}' })
+    const f = vi.fn(async (_url: string, _init?: RequestInit) => new Response('', { status: 200 }))
+    vi.stubGlobal('fetch', f)
 
     const reload = vi.fn()
     await signOut(reload)
 
     expect(reload).toHaveBeenCalledTimes(1)
-    expect(g.revoke).toHaveBeenCalledWith('tok-1', expect.anything())
+    expect(f).toHaveBeenCalledTimes(1)
+    const [url, init] = f.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://oauth2.googleapis.com/revoke?token=tok-1')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe(
+      'application/x-www-form-urlencoded',
+    )
     expect(await db.meta.get('google.account')).toBeUndefined()
     expect(await db.meta.get('google.folderId')).toBeUndefined()
     expect(await db.meta.get('google.folderInfo')).toBeUndefined()
+    expect(await db.meta.get('google.token')).toBeUndefined()
     expect(engine.stopSync).toHaveBeenCalledTimes(1)
     expect(await isSignedIn()).toBe(false)
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
   })
 
+  test('revokes the persisted token after a reload', async () => {
+    await signedIn()
+    resetAuthForTests()
+    const f = vi.fn(async (_url: string, _init?: RequestInit) => new Response('', { status: 200 }))
+    vi.stubGlobal('fetch', f)
+    await signOut(vi.fn())
+    expect(f.mock.calls[0][0]).toBe('https://oauth2.googleapis.com/revoke?token=tok-1')
+  })
+
   test('deletes the account before reloading the page so the next session starts signed out', async () => {
-    const g = installGoogle()
-    g.answers.push({ access_token: 'tok-1', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
+    await signedIn()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('')))
     let accountAtReload: unknown = 'unset'
     await signOut(() => {
-      // reload is called synchronously after the awaited meta delete
       void db.meta.get('google.account').then((r) => (accountAtReload = r))
     })
     await vi.waitFor(() => expect(accountAtReload).toBeUndefined())
   })
 
   test('a reload that throws does not fail signOut', async () => {
-    installGoogle()
     await signOut(() => {
       throw new Error('no reload')
     })
     expect(engine.stopSync).toHaveBeenCalledTimes(1)
   })
 
-  test('still signs out when revoke throws or GIS is absent', async () => {
-    const g = installGoogle()
-    g.answers.push({ access_token: 'tok-1', expires_in: 3599 })
-    mockUserinfo()
-    await signIn()
-    g.revoke.mockImplementation(() => {
+  test('still signs out when revoke fails or throws', async () => {
+    await signedIn()
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('offline'))))
+    const reload = vi.fn()
+    await signOut(reload)
+    expect(await isSignedIn()).toBe(false)
+    expect(reload).toHaveBeenCalledTimes(1)
+
+    await signedIn('tok-2')
+    vi.stubGlobal('fetch', () => {
       throw new Error('boom')
     })
-    await signOut(vi.fn())
+    await signOut(reload)
     expect(await isSignedIn()).toBe(false)
+    expect(reload).toHaveBeenCalledTimes(2)
+  })
 
-    delete (window as unknown as { google?: unknown }).google
+  test('without a token it does not call the revoke endpoint', async () => {
+    const f = vi.fn()
+    vi.stubGlobal('fetch', f)
     await signOut(vi.fn())
-    expect(engine.stopSync).toHaveBeenCalledTimes(2)
+    expect(f).not.toHaveBeenCalled()
   })
 })
