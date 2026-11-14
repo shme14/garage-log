@@ -9,6 +9,6 @@ export const FOLDER_NAME = 'Garage Log'
 
 // Keys in the Dexie meta table (local to this device; never exported or synced).
 export const ACCOUNT_KEY = 'google.account' // JSON { name, email }
-export const TOKEN_KEY = 'google.token' // JSON { token, expiresAt }: kept only until it expires (~1 h)
+export const TOKEN_KEY = 'google.token' // JSON { token, expiresAt, email? }: kept only until it expires (~1 h)
 export const FOLDER_ID_KEY = 'google.folderId'
 export const FOLDER_INFO_KEY = 'google.folderInfo' // JSON DriveFolder, for display only

@@ -43,6 +43,8 @@ interface PendingRedirect {
 interface StoredToken {
   token: string
   expiresAt: number
+  /** Set only once userinfo confirmed whose token this is; a row without it is never used. */
+  email?: string
 }
 
 // ---------------------------------------------------------------- token state
@@ -79,7 +81,11 @@ async function readStoredToken(): Promise<StoredToken | 'invalid' | undefined> {
   try {
     const v = JSON.parse(row.value) as Partial<StoredToken>
     if (typeof v.token === 'string' && typeof v.expiresAt === 'number') {
-      return { token: v.token, expiresAt: v.expiresAt }
+      return {
+        token: v.token,
+        expiresAt: v.expiresAt,
+        ...(typeof v.email === 'string' && v.email !== '' ? { email: v.email } : {}),
+      }
     }
   } catch {
     // fall through
@@ -93,6 +99,8 @@ function fresh(at: number): boolean {
 
 /**
  * A valid access token: the in-memory one, else the persisted one, if it has more than 60 s left.
+ * A persisted token is used only when it was confirmed (userinfo) for the stored account; one
+ * left unconfirmed (page closed first) or confirmed for another account is deleted.
  * Otherwise throws AuthError so the sync chip asks for a tap on "Sign in".
  *
  * This never starts a sign-in itself (no navigation, no popup): it runs from background sync
@@ -103,12 +111,21 @@ export async function getToken(): Promise<string> {
   if (token && fresh(expiresAt)) return token
   forgetMemoryToken()
   let stored: Awaited<ReturnType<typeof readStoredToken>>
+  let account: GoogleAccount | undefined
   try {
     stored = await readStoredToken()
+    account = stored && stored !== 'invalid' ? await getAccount() : undefined
   } catch {
     stored = undefined
   }
-  if (stored && stored !== 'invalid' && stored.token !== rejected && fresh(stored.expiresAt)) {
+  if (
+    stored &&
+    stored !== 'invalid' &&
+    stored.token !== rejected &&
+    fresh(stored.expiresAt) &&
+    stored.email !== undefined &&
+    stored.email === account?.email
+  ) {
     token = stored.token
     expiresAt = stored.expiresAt
     return token
@@ -316,10 +333,15 @@ async function verifyAccount(
 ): Promise<void> {
   try {
     const account = await fetchUserinfo(accessToken)
-    await persisted
+    const wasPersisted = await persisted
     if (gen !== generation) return // signed out meanwhile
     await applyAccount(account)
     if (gen !== generation) return
+    if (wasPersisted && token === accessToken) {
+      // Confirm the persisted copy: only now may a later page load use it (see getToken).
+      const confirmed: StoredToken = { token: accessToken, expiresAt, email: account.email }
+      await db.meta.put({ key: TOKEN_KEY, value: JSON.stringify(confirmed) })
+    }
     redirectSignIn = true
   } catch (e) {
     await persisted

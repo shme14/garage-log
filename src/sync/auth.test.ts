@@ -49,9 +49,10 @@ function deferredUserinfo(body: unknown = { name: 'Jamie D', email: 'jamie@examp
   return { f, release }
 }
 
-async function storedToken(): Promise<{ token: string; expiresAt: number } | undefined> {
+type Stored = { token: string; expiresAt: number; email?: string }
+async function storedToken(): Promise<Stored | undefined> {
   const row = await db.meta.get('google.token')
-  return row ? (JSON.parse(row.value) as { token: string; expiresAt: number }) : undefined
+  return row ? (JSON.parse(row.value) as Stored) : undefined
 }
 
 /** A successful round trip through Google: state saved, page lands with a token. */
@@ -157,6 +158,7 @@ describe('completeRedirect', () => {
     await completeRedirect() // the render gate: must not wait on the userinfo fetch
     expect(f).toHaveBeenCalledTimes(1) // started, still unanswered
     expect((await storedToken())?.token).toBe('tok-1')
+    expect((await storedToken())?.email).toBeUndefined() // not confirmed yet
     expect(await db.meta.get('google.account')).toBeUndefined()
 
     let tokenSeen: string | undefined
@@ -260,6 +262,7 @@ describe('completeRedirect', () => {
     expect(await getUser()).toBe('Jamie D')
     const t = (await storedToken())!
     expect(t.token).toBe('tok-1')
+    expect(t.email).toBe('jamie@example.com') // confirmed by userinfo
     expect(t.expiresAt).toBeGreaterThanOrEqual(before + 3599_000)
     expect(t.expiresAt).toBeLessThanOrEqual(Date.now() + 3599_000)
     expect(await getToken()).toBe('tok-1')
@@ -405,6 +408,51 @@ describe('getToken', () => {
     const f = mockUserinfo()
     expect(await getToken()).toBe('tok-1')
     expect(f).not.toHaveBeenCalled()
+  })
+
+  async function persist(row: Record<string, unknown>, accountEmail?: string) {
+    if (accountEmail) {
+      await db.meta.put({
+        key: 'google.account',
+        value: JSON.stringify({ email: accountEmail, name: 'Someone' }),
+      })
+    }
+    await db.meta.put({ key: 'google.token', value: JSON.stringify(row) })
+    resetAuthForTests() // as after a reload
+  }
+
+  test('a persisted token confirmed for the stored account is returned', async () => {
+    await persist({ token: 'tok-c', expiresAt: Date.now() + 3_000_000, email: 'jamie@example.com' }, 'jamie@example.com')
+    expect(await getToken()).toBe('tok-c')
+  })
+
+  test('an unconfirmed persisted token (page closed before userinfo) is discarded', async () => {
+    await persist({ token: 'tok-u', expiresAt: Date.now() + 3_000_000 }, 'jamie@example.com')
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(await db.meta.get('google.token')).toBeUndefined()
+  })
+
+  test('a persisted token confirmed for a different account is discarded', async () => {
+    await persist({ token: 'tok-o', expiresAt: Date.now() + 3_000_000, email: 'old@x.com' }, 'jamie@example.com')
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(await db.meta.get('google.token')).toBeUndefined()
+  })
+
+  test('a confirmed persisted token with no stored account is discarded', async () => {
+    await persist({ token: 'tok-n', expiresAt: Date.now() + 3_000_000, email: 'jamie@example.com' })
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(await db.meta.get('google.token')).toBeUndefined()
+  })
+
+  test('a sign-in interrupted before confirmation is not usable after a reload', async () => {
+    saveState('s-1')
+    landWith({ access_token: 'tok-i', expires_in: '3599', state: 's-1' })
+    deferredUserinfo() // never released: the page "closes" first
+    await completeRedirect()
+    expect(await storedToken()).toEqual({ token: 'tok-i', expiresAt: expect.any(Number) })
+    resetAuthForTests()
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+    expect(await db.meta.get('google.token')).toBeUndefined()
   })
 
   test('an expired persisted token throws AuthError and is deleted', async () => {
