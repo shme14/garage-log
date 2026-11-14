@@ -6,6 +6,8 @@ import { AuthError } from './store'
 // Google sign-in with a full-page OAuth 2.0 implicit redirect (no popup, no Google script):
 // signIn navigates to Google, Google navigates back to the app with the token in the URL fragment,
 // and completeRedirect (run from main.tsx before anything renders) takes it out of the URL at once.
+// The account behind the token is then read in the background (pendingSignIn), so the first
+// render never waits on the network; getToken holds the token back until that check is done.
 //
 // The access token is kept in memory and in IndexedDB (meta 'google.token') only until it expires
 // (~1 h), so reopening the app within the hour needs no new sign-in. It is never written to
@@ -16,8 +18,14 @@ const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 const SCOPE = 'https://www.googleapis.com/auth/drive openid email profile'
 
-/** sessionStorage key for the pending redirect: { state, returnHash }. */
+/**
+ * localStorage key for the pending redirect: { state, returnHash, createdAt }. localStorage, not
+ * sessionStorage: an installed app's redirect can come back in a regular browser tab, which shares
+ * the origin's localStorage and IndexedDB, so that tab can finish the sign-in and the app then
+ * picks the token up from IndexedDB. It holds only the CSRF nonce, never a token.
+ */
 const OAUTH_KEY = 'garage.oauth'
+const PENDING_MAX_AGE_MS = 10 * 60_000
 
 const REFRESH_MARGIN_MS = 60_000
 
@@ -29,6 +37,7 @@ export interface GoogleAccount {
 interface PendingRedirect {
   state: string
   returnHash: string
+  createdAt: number
 }
 
 interface StoredToken {
@@ -90,6 +99,7 @@ function fresh(at: number): boolean {
  * passes, and only a tap on "Sign in" may take the user to Google.
  */
 export async function getToken(): Promise<string> {
+  await verifying // a token just back from Google is not used before its account is known
   if (token && fresh(expiresAt)) return token
   forgetMemoryToken()
   let stored: Awaited<ReturnType<typeof readStoredToken>>
@@ -115,6 +125,19 @@ let knownEmail: string | undefined
 
 // Set when this page load finished a sign-in; read once by the settings page (to offer folders).
 let redirectSignIn = false
+
+// The background step of completeRedirect (userinfo + account). Never rejects.
+let verifying: Promise<void> = Promise.resolve()
+// Bumped by signOut so a background step that finishes afterwards stores nothing.
+let generation = 0
+
+/**
+ * Resolves when a sign-in completed by this page load has its account stored (or failed).
+ * Resolves at once when there is none. Never rejects.
+ */
+export function pendingSignIn(): Promise<void> {
+  return verifying
+}
 
 async function readAccount(): Promise<GoogleAccount | undefined> {
   const row = await db.meta.get(ACCOUNT_KEY)
@@ -196,9 +219,9 @@ export async function signIn(
     state,
   })
   if (email) params.set('login_hint', email)
-  const pending: PendingRedirect = { state, returnHash: window.location.hash }
+  const pending: PendingRedirect = { state, returnHash: window.location.hash, createdAt: Date.now() }
   try {
-    sessionStorage.setItem(OAUTH_KEY, JSON.stringify(pending))
+    localStorage.setItem(OAUTH_KEY, JSON.stringify(pending))
   } catch {
     // storage blocked: the state check will reject the answer, so nothing unsafe is accepted
   }
@@ -206,14 +229,22 @@ export async function signIn(
   return new Promise<never>(() => {})
 }
 
+/** Read and remove the pending redirect; a missing, malformed or stale (>10 min) entry is undefined. */
 function takePending(): PendingRedirect | undefined {
   try {
-    const raw = sessionStorage.getItem(OAUTH_KEY)
-    sessionStorage.removeItem(OAUTH_KEY)
+    const raw = localStorage.getItem(OAUTH_KEY)
+    localStorage.removeItem(OAUTH_KEY)
     if (!raw) return undefined
     const v = JSON.parse(raw) as Partial<PendingRedirect>
     if (typeof v.state !== 'string' || v.state === '') return undefined
-    return { state: v.state, returnHash: typeof v.returnHash === 'string' ? v.returnHash : '' }
+    if (typeof v.createdAt !== 'number') return undefined
+    const age = Date.now() - v.createdAt
+    if (!(age >= 0 && age <= PENDING_MAX_AGE_MS)) return undefined
+    return {
+      state: v.state,
+      returnHash: typeof v.returnHash === 'string' ? v.returnHash : '',
+      createdAt: v.createdAt,
+    }
   } catch {
     return undefined
   }
@@ -226,7 +257,9 @@ function safeReturnHash(h: string | undefined): string {
 /**
  * Finish a sign-in when Google has just sent the browser back. Call before the router renders.
  * Does nothing unless the fragment holds OAuth params. The token leaves the URL synchronously,
- * before any await. Never throws: a failure must not stop the app from rendering.
+ * before any await; it is then held in memory and persisted, and this resolves without touching
+ * the network. Reading the account (userinfo, name, folder rules) continues in the background:
+ * see pendingSignIn. Never throws: a failure must not stop the app from rendering.
  */
 export async function completeRedirect(): Promise<void> {
   let params: URLSearchParams
@@ -257,19 +290,43 @@ export async function completeRedirect(): Promise<void> {
     return
   }
 
+  const seconds = Number(params.get('expires_in'))
+  token = accessToken
+  expiresAt = Date.now() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000
+  if (rejected === accessToken) rejected = undefined
+  const stored: StoredToken = { token: accessToken, expiresAt }
+  let persisted: Promise<boolean>
   try {
-    const seconds = Number(params.get('expires_in'))
-    token = accessToken
-    expiresAt = Date.now() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000
-    if (rejected === accessToken) rejected = undefined
+    persisted = db.meta.put({ key: TOKEN_KEY, value: JSON.stringify(stored) }).then(
+      () => true,
+      () => false, // memory only then: fine for this session
+    )
+  } catch {
+    persisted = Promise.resolve(false)
+  }
+  verifying = verifyAccount(accessToken, generation, persisted)
+  await persisted
+}
+
+/** Background half of completeRedirect: read who signed in and apply the account rules. */
+async function verifyAccount(
+  accessToken: string,
+  gen: number,
+  persisted: Promise<boolean>,
+): Promise<void> {
+  try {
     const account = await fetchUserinfo(accessToken)
+    await persisted
+    if (gen !== generation) return // signed out meanwhile
     await applyAccount(account)
-    const stored: StoredToken = { token: accessToken, expiresAt }
-    await db.meta.put({ key: TOKEN_KEY, value: JSON.stringify(stored) })
+    if (gen !== generation) return
     redirectSignIn = true
   } catch (e) {
-    forgetMemoryToken()
-    await deleteStoredToken()
+    await persisted
+    if (gen === generation) {
+      if (token === accessToken) forgetMemoryToken()
+      await deleteStoredToken()
+    }
     console.error('Google sign-in could not be completed:', e instanceof Error ? e.message : 'unknown error')
   }
 }
@@ -293,6 +350,7 @@ export async function signOut(
   reload: () => void = () => window.location.reload(),
 ): Promise<void> {
   stopSync()
+  generation++
   let old = token
   if (!old) {
     try {
@@ -323,4 +381,5 @@ export function resetAuthForTests(): void {
   rejected = undefined
   knownEmail = undefined
   redirectSignIn = false
+  verifying = Promise.resolve()
 }

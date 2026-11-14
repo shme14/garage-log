@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
   isSignedIn: vi.fn(),
   getFolderId: vi.fn(),
   completeRedirect: vi.fn(),
+  pendingSignIn: vi.fn(),
   order: [] as string[],
   store: { tag: 'drive-store' },
 }))
@@ -26,6 +27,7 @@ vi.mock('./auth', () => ({
     return m.signedIn
   },
   completeRedirect: () => m.completeRedirect(),
+  pendingSignIn: () => m.pendingSignIn(),
 }))
 vi.mock('./drive', () => ({
   getFolderId: async () => m.folderId,
@@ -43,6 +45,9 @@ beforeEach(() => {
   m.order = []
   m.completeRedirect.mockReset().mockImplementation(async () => {
     m.order.push('completeRedirect')
+  })
+  m.pendingSignIn.mockReset().mockImplementation(async () => {
+    m.order.push('pendingSignIn')
   })
 })
 
@@ -112,6 +117,25 @@ describe('bootSync', () => {
     vi.unstubAllGlobals()
   })
 
+  test('waits for a sign-in still being completed before checking the account', async () => {
+    let finish!: () => void
+    m.pendingSignIn.mockImplementation(() => new Promise<void>((r) => (finish = r)))
+    m.signedIn = false // the account is not stored yet
+    const done = bootSync()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(m.order).not.toContain('isSignedIn')
+    m.signedIn = true // the background step saved it
+    finish()
+    await done
+    expect(m.startSync).toHaveBeenCalledTimes(1)
+  })
+
+  test('a failed pending sign-in still lets boot run', async () => {
+    m.pendingSignIn.mockRejectedValue(new Error('x'))
+    await expect(bootSync()).resolves.toBeUndefined()
+    expect(m.startSync).toHaveBeenCalledTimes(1)
+  })
+
   test('never rejects', async () => {
     m.folderId = undefined
     m.signedIn = false
@@ -138,7 +162,7 @@ describe('startApp', () => {
     finish()
     await done
     await vi.waitFor(() => expect(m.startSync).toHaveBeenCalledTimes(1))
-    expect(m.order.slice(0, 3)).toEqual(['completeRedirect', 'render', 'isSignedIn'])
+    expect(m.order.slice(0, 4)).toEqual(['completeRedirect', 'render', 'pendingSignIn', 'isSignedIn'])
   })
 
   test('renders even when completing the redirect fails', async () => {

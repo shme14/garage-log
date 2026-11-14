@@ -12,6 +12,7 @@ import {
   getAccount,
   getToken,
   isSignedIn,
+  pendingSignIn,
   resetAuthForTests,
   signIn,
   signOut,
@@ -32,8 +33,20 @@ function landWith(params: Record<string, string>) {
   history.replaceState(null, '', `${location.pathname}${location.search}#${frag}`)
 }
 
-function saveState(state: string, returnHash = '#/settings') {
-  sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ state, returnHash }))
+function saveState(state: string, returnHash = '#/settings', createdAt = Date.now()) {
+  localStorage.setItem(OAUTH_KEY, JSON.stringify({ state, returnHash, createdAt }))
+}
+
+/** A fetch whose answer the test releases later. */
+function deferredUserinfo(body: unknown = { name: 'Jamie D', email: 'jamie@example.com' }) {
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const f = vi.fn(async (_url: string, _init?: RequestInit) => {
+    await gate
+    return new Response(JSON.stringify(body), { status: 200 })
+  })
+  vi.stubGlobal('fetch', f)
+  return { f, release }
 }
 
 async function storedToken(): Promise<{ token: string; expiresAt: number } | undefined> {
@@ -47,10 +60,12 @@ async function signedIn(token = 'tok-1', expiresIn = 3599) {
   landWith({ access_token: token, token_type: 'Bearer', expires_in: String(expiresIn), scope: SCOPE, state: 's-ok' })
   mockUserinfo()
   await completeRedirect()
+  await pendingSignIn()
 }
 
 beforeEach(async () => {
   await db.meta.clear()
+  localStorage.clear()
   sessionStorage.clear()
   history.replaceState(null, '', '/garage-log/#/')
   resetAuthForTests()
@@ -84,8 +99,10 @@ describe('signIn', () => {
     const state = p.get('state')!
     expect(state).toMatch(/^[0-9a-f-]{36}$/)
 
-    const saved = JSON.parse(sessionStorage.getItem(OAUTH_KEY)!) as Record<string, string>
-    expect(saved).toEqual({ state, returnHash: '#/vehicle/v1' })
+    const saved = JSON.parse(localStorage.getItem(OAUTH_KEY)!) as Record<string, unknown>
+    expect(saved).toEqual({ state, returnHash: '#/vehicle/v1', createdAt: expect.any(Number) })
+    expect(Math.abs((saved.createdAt as number) - Date.now())).toBeLessThan(5000)
+    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
     expect(f).not.toHaveBeenCalled()
   })
 
@@ -132,6 +149,94 @@ describe('signIn', () => {
 })
 
 describe('completeRedirect', () => {
+  test('does not wait for the network: resolves with the token in memory and in the DB', async () => {
+    saveState('s-1', '#/settings')
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
+    const { f, release } = deferredUserinfo()
+
+    await completeRedirect() // the render gate: must not wait on the userinfo fetch
+    expect(f).toHaveBeenCalledTimes(1) // started, still unanswered
+    expect((await storedToken())?.token).toBe('tok-1')
+    expect(await db.meta.get('google.account')).toBeUndefined()
+
+    let tokenSeen: string | undefined
+    const t = getToken().then((v) => (tokenSeen = v))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(tokenSeen).toBeUndefined() // nothing uses the token before its account is known
+
+    release()
+    await pendingSignIn()
+    await t
+    expect(tokenSeen).toBe('tok-1')
+    expect(JSON.parse((await db.meta.get('google.account'))!.value)).toEqual({
+      name: 'Jamie D',
+      email: 'jamie@example.com',
+    })
+    expect(consumeRedirectSignIn()).toBe(true)
+  })
+
+  test('pendingSignIn resolves at once when no sign-in is being completed', async () => {
+    await expect(pendingSignIn()).resolves.toBeUndefined()
+  })
+
+  test('a sign-out during the background step does not bring the account back', async () => {
+    saveState('s-1')
+    landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
+    const { release } = deferredUserinfo()
+    await completeRedirect()
+    await signOut(vi.fn())
+    release()
+    await pendingSignIn()
+    expect(await db.meta.get('google.account')).toBeUndefined()
+    expect(await storedToken()).toBeUndefined()
+    await expect(getToken()).rejects.toBeInstanceOf(AuthError)
+  })
+
+  test('an entry older than 10 minutes counts as missing', async () => {
+    saveState('s-1', '#/settings', Date.now() - 10 * 60_000 - 1000)
+    landWith({ access_token: 'tok-old', expires_in: '3599', state: 's-1' })
+    const f = mockUserinfo()
+    await completeRedirect()
+    await pendingSignIn()
+    expect(location.hash).toBe('#/') // a stale entry's return hash is not used either
+    expect(f).not.toHaveBeenCalled()
+    expect(await storedToken()).toBeUndefined()
+    expect(localStorage.getItem(OAUTH_KEY)).toBeNull()
+  })
+
+  test('an entry without createdAt counts as missing', async () => {
+    localStorage.setItem(OAUTH_KEY, JSON.stringify({ state: 's-1', returnHash: '#/settings' }))
+    landWith({ access_token: 'tok-x', expires_in: '3599', state: 's-1' })
+    mockUserinfo()
+    await completeRedirect()
+    expect(await storedToken()).toBeUndefined()
+  })
+
+  test('completes in a different tab (fresh module state, same localStorage and DB)', async () => {
+    const go = vi.fn()
+    history.replaceState(null, '', '/garage-log/#/settings')
+    void signIn(go)
+    await vi.waitFor(() => expect(go).toHaveBeenCalled())
+    const state = new URL(go.mock.calls[0][0] as string).searchParams.get('state')!
+
+    // Google returns into another browsing context: new page, nothing in memory or sessionStorage.
+    sessionStorage.clear()
+    vi.resetModules()
+    const other = await import('./auth')
+    history.replaceState(null, '', '/garage-log/')
+    landWith({ access_token: 'tok-tab', expires_in: '3599', state })
+    mockUserinfo()
+    await other.completeRedirect()
+    await other.pendingSignIn()
+    expect(location.hash).toBe('#/settings')
+    expect((await storedToken())?.token).toBe('tok-tab')
+
+    // The installed app (this module instance) picks it up from IndexedDB.
+    resetAuthForTests()
+    expect(await getToken()).toBe('tok-tab')
+    expect(await isSignedIn()).toBe(true)
+  })
+
   test('strips the fragment synchronously, stores the account and the token', async () => {
     saveState('s-1', '#/settings')
     landWith({ access_token: 'tok-1', token_type: 'Bearer', expires_in: '3599', scope: SCOPE, state: 's-1' })
@@ -142,6 +247,7 @@ describe('completeRedirect', () => {
     expect(location.hash).toBe('#/settings') // before any await: the router never sees the token
     expect(location.href).not.toContain('tok-1')
     await p
+    await pendingSignIn()
 
     const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('https://www.googleapis.com/oauth2/v3/userinfo')
@@ -157,12 +263,12 @@ describe('completeRedirect', () => {
     expect(t.expiresAt).toBeGreaterThanOrEqual(before + 3599_000)
     expect(t.expiresAt).toBeLessThanOrEqual(Date.now() + 3599_000)
     expect(await getToken()).toBe('tok-1')
-    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
+    expect(localStorage.getItem(OAUTH_KEY)).toBeNull()
     expect(JSON.stringify(Object.entries(localStorage))).not.toContain('tok-1')
   })
 
   test('falls back to #/ when no return hash was saved', async () => {
-    sessionStorage.setItem(OAUTH_KEY, JSON.stringify({ state: 's-1', returnHash: '' }))
+    localStorage.setItem(OAUTH_KEY, JSON.stringify({ state: 's-1', returnHash: '', createdAt: Date.now() }))
     landWith({ access_token: 'tok-1', expires_in: '3599', state: 's-1' })
     mockUserinfo()
     const p = completeRedirect()
@@ -186,7 +292,7 @@ describe('completeRedirect', () => {
     expect(await storedToken()).toBeUndefined()
     expect(await isSignedIn()).toBe(false)
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
-    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
+    expect(localStorage.getItem(OAUTH_KEY)).toBeNull()
     expect(consumeRedirectSignIn()).toBe(false)
   })
 
@@ -218,7 +324,7 @@ describe('completeRedirect', () => {
     expect(f).not.toHaveBeenCalled()
     expect(await storedToken()).toBeUndefined()
     expect(await isSignedIn()).toBe(false)
-    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull()
+    expect(localStorage.getItem(OAUTH_KEY)).toBeNull()
   })
 
   test('does nothing when the hash holds no OAuth params', async () => {
@@ -228,7 +334,7 @@ describe('completeRedirect', () => {
     await completeRedirect()
     expect(location.hash).toBe('#/search?q=error')
     expect(f).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem(OAUTH_KEY)).not.toBeNull()
+    expect(localStorage.getItem(OAUTH_KEY)).not.toBeNull()
   })
 
   test('a failing userinfo request keeps no token and does not throw', async () => {
@@ -238,6 +344,7 @@ describe('completeRedirect', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(completeRedirect()).resolves.toBeUndefined()
     expect(location.hash).toBe('#/settings')
+    await expect(pendingSignIn()).resolves.toBeUndefined()
     expect(await storedToken()).toBeUndefined()
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
     expect(JSON.stringify(err.mock.calls)).not.toContain('tok-1')
@@ -324,7 +431,7 @@ describe('getToken', () => {
     await expect(getToken()).rejects.toBeInstanceOf(AuthError)
     expect(f).not.toHaveBeenCalled()
     expect(location.href).toBe(href) // no navigation
-    expect(sessionStorage.getItem(OAUTH_KEY)).toBeNull() // no sign-in was started
+    expect(localStorage.getItem(OAUTH_KEY)).toBeNull() // no sign-in was started
   })
 
   test('with no prior sign-in it throws AuthError', async () => {

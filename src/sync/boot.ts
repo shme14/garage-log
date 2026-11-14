@@ -1,4 +1,4 @@
-import { completeRedirect, isSignedIn } from './auth'
+import { completeRedirect, isSignedIn, pendingSignIn } from './auth'
 import { createDriveStore, getFolderId } from './drive'
 import { startSync } from './engine'
 
@@ -37,6 +37,13 @@ export async function bootSync(): Promise<void> {
     // unsupported or blocked: nothing to do
   }
   try {
+    // After a redirect sign-in the account is stored in the background: check it only once that
+    // is done, so the first session after signing in starts syncing (still once per session).
+    await pendingSignIn()
+  } catch {
+    // never rejects; boot goes on regardless
+  }
+  try {
     await ensureSyncStarted()
   } catch {
     // an unreadable meta table must not stop the app from rendering
@@ -46,7 +53,8 @@ export async function bootSync(): Promise<void> {
 /**
  * App entry, called once from main.tsx. If Google has just redirected back with a token in the
  * URL fragment, completeRedirect takes it out of the URL (and stores the sign-in) BEFORE render,
- * so HashRouter never sees it as a route; bootSync then runs with the new account in place.
+ * so HashRouter never sees it as a route. It does not wait on the network; bootSync waits for
+ * the account to be stored (pendingSignIn) before deciding whether to start syncing.
  * Nothing here can stop the app from rendering.
  */
 export async function startApp(render: () => void): Promise<void> {

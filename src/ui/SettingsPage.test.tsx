@@ -31,6 +31,7 @@ const google = vi.hoisted(() => ({
   ensureSyncStarted: vi.fn(),
   syncNow: vi.fn(),
   freshSignIn: false,
+  pending: Promise.resolve() as Promise<void>,
 }))
 
 vi.mock('../sync/engine', () => ({
@@ -44,6 +45,7 @@ vi.mock('../sync/auth', () => ({
   getAccount: async () => google.account,
   signIn: (...a: unknown[]) => google.signIn(...a),
   signOut: (...a: unknown[]) => google.signOut(...a),
+  pendingSignIn: () => google.pending,
   consumeRedirectSignIn: () => {
     const v = google.freshSignIn
     google.freshSignIn = false
@@ -156,6 +158,7 @@ beforeEach(async () => {
   google.ensureSyncStarted.mockReset().mockResolvedValue(true)
   google.syncNow.mockReset().mockResolvedValue(undefined)
   google.freshSignIn = false
+  google.pending = Promise.resolve()
   await Promise.all([
     db.vehicles.clear(),
     db.entries.clear(),
@@ -319,6 +322,20 @@ describe('SettingsPage', () => {
     ).toBeInTheDocument()
     expect(google.setFolder).not.toHaveBeenCalled()
     expect(google.ensureSyncStarted).not.toHaveBeenCalled()
+  })
+
+  test('back from Google while the account is still being read, it shows it once known', async () => {
+    let finish!: () => void
+    google.pending = new Promise<void>((r) => (finish = r))
+    google.matches = [{ id: 'f1', name: 'Garage Log', ownerEmail: 'o@example.com', shared: true }]
+    renderPage()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByText('Not signed in')).toBeInTheDocument()
+    google.account = { name: 'Jamie D', email: 'jamie@example.com' }
+    google.freshSignIn = true
+    finish()
+    expect(await screen.findByText(/jamie@example.com/)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /o@example.com/ })).toBeInTheDocument()
   })
 
   test('an ordinary visit while signed in without a folder does not list folders by itself', async () => {

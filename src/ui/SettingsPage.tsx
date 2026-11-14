@@ -8,6 +8,7 @@ import { loadSeed } from '../import/seed'
 import {
   consumeRedirectSignIn,
   getAccount,
+  pendingSignIn,
   signIn,
   signOut,
   type GoogleAccount,
@@ -125,13 +126,16 @@ function SyncSection() {
 
   useEffect(() => {
     let live = true
-    void Promise.all([getAccount(), getFolder()]).then(([a, f]) => {
-      if (!live) return
-      setAccount(a)
-      setFolderInfo(f)
-      // Just back from Google with no folder yet: list the folders to pick from (never auto-pick).
-      if (consumeRedirectSignIn() && a && !f) void loadMatches()
-    })
+    // Right after a redirect sign-in the account is still being read: show it once stored.
+    void pendingSignIn()
+      .then(() => Promise.all([getAccount(), getFolder()]))
+      .then(([a, f]) => {
+        if (!live) return
+        setAccount(a)
+        setFolderInfo(f)
+        // Just back from Google with no folder yet: list the folders to pick from (never auto-pick).
+        if (consumeRedirectSignIn() && a && !f) void loadMatches()
+      })
     return () => {
       live = false
     }
